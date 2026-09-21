@@ -283,7 +283,7 @@ static void gpsPoll() {
 static int mapZoom = 14;
 static double mapCenterLat = 47.6062;   // fallback default: Seattle
 static double mapCenterLon = -122.3321;
-static bool mapFollowGps = true;
+static bool mapFollowGps = false;   // start on the downloaded tiles, not raw GPS
 static bool mapTilesScanned = false;
 
 // On first map entry, find tiles on the SD and center/zoom on them so the app
@@ -383,6 +383,19 @@ static void mapApp() {
       int mx = SCREEN_W / 2, my = (SCREEN_H - 16) / 2;
       gfx->fillCircle(mx, my, 3, RED);
       gfx->drawCircle(mx, my, 6, RED);
+      // GPS position marker (blue dot) when fixed, if not centered
+      if (hasFix && !mapFollowGps) {
+        double nn = pow(2, mapZoom);
+        double lr = gps.location.lat() * M_PI / 180.0;
+        double gpx = (gps.location.lng() + 180.0) / 360.0 * nn * 256.0;
+        double gpy = (1.0 - log(tan(lr) + 1.0 / cos(lr)) / M_PI) / 2.0 * nn * 256.0;
+        int dx = (int)lround(gpx - centerPixelXf) + mx;
+        int dy = (int)lround(gpy - centerPixelYf) + my;
+        if (dx >= 3 && dx < SCREEN_W - 3 && dy >= 3 && dy < SCREEN_H - 19) {
+          gfx->fillCircle(dx, dy, 4, RGB565(0, 120, 255));
+          gfx->drawCircle(dx, dy, 6, WHITE);
+        }
+      }
       // status bar
       gfx->fillRect(0, SCREEN_H - 16, SCREEN_W, 16, BLACK);
       gfx->setTextSize(1);

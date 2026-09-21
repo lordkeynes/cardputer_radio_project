@@ -27,7 +27,7 @@
 #define MAX_FILES 32
 
 Arduino_DataBus *bus = new Arduino_HWSPI(BOARD_TFT_DC, BOARD_TFT_CS);
-Arduino_GFX *gfx = new Arduino_ST7789(bus, GFX_NOT_DEFINED /* RST */, 1 /* rotation */, false /* IPS */, 320, 240);
+Arduino_GFX *gfx = new Arduino_ST7789(bus, GFX_NOT_DEFINED /* RST */, 1 /* rotation */, false /* IPS */);
 
 enum AppEvent { EV_NONE, EV_UP, EV_DOWN, EV_LEFT, EV_RIGHT, EV_SELECT, EV_LONGSELECT, EV_BACK, EV_SPACE, EV_CHAR, EV_DELETE };
 

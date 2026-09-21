@@ -96,7 +96,9 @@ static bool promptText(const char *label, String &out) {
     InputEventP e;
     if (!pdaGetInput(e, 50)) continue;
     if (e.ev == PDA_EV_NEWLINE || e.ev == PDA_EV_SELECT) return out.length() > 0;
-    if (e.ev == PDA_EV_CHAR) {
+    if (e.ev == PDA_EV_SPACE) {
+      if (out.length() < 63) { out += ' '; gfx->print(' '); }
+    } else if (e.ev == PDA_EV_CHAR) {
       if (out.length() < 63) { out += e.ch; gfx->print(e.ch); }
     } else if (e.ev == PDA_EV_DELETE) {
       if (out.length() > 0) {

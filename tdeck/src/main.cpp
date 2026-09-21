@@ -924,6 +924,40 @@ static void recorderApp() {
   delay(1200);
 }
 
+// Simple beep for the timer alarm; uses its own short-lived I2S session.
+void spkBeep(int ms) {
+  i2s_config_t i2s_config = {};
+  i2s_config.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
+  i2s_config.sample_rate = 16000;
+  i2s_config.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+  i2s_config.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
+  i2s_config.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  i2s_config.dma_buf_count = 4;
+  i2s_config.dma_buf_len = 256;
+  i2s_config.use_apll = false;
+  i2s_pin_config_t pins = {};
+  pins.bck_io_num = BOARD_I2S_BCK;
+  pins.ws_io_num = BOARD_I2S_WS;
+  pins.data_out_num = BOARD_I2S_DOUT;
+  pins.data_in_num = I2S_PIN_NO_CHANGE;
+  if (i2s_driver_install(SPK_I2S_PORT, &i2s_config, 0, NULL) != ESP_OK) return;
+  i2s_set_pin(SPK_I2S_PORT, &pins);
+  i2s_zero_dma_buffer(SPK_I2S_PORT);
+  // 880 Hz square wave
+  static int16_t beepBuf[1600];  // 100ms worth
+  for (int i = 0; i < 1600; i++) {
+    int16_t v = ((i * 880) / 16000) % 2 ? 6000 : -6000;
+    beepBuf[i] = v;
+  }
+  uint32_t start = millis();
+  size_t written;
+  while ((int32_t)(millis() - start) < (int32_t)ms) {
+    i2s_write(SPK_I2S_PORT, beepBuf, sizeof(beepBuf), &written, pdMS_TO_TICKS(200));
+  }
+  i2s_zero_dma_buffer(SPK_I2S_PORT);
+  i2s_driver_uninstall(SPK_I2S_PORT);
+}
+
 static void playbackApp() {
   String path;
   if (pickFile("Play recording", REC_DIR, ".wav", path) < 0) return;

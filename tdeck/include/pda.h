@@ -1,7 +1,7 @@
 #pragma once
 #include <Arduino_GFX_Library.h>
 
-// Shared event codes (must match AppEvent order in main.cpp)
+// Shared event codes (must match AppEvent values in main.cpp exactly)
 #define PDA_EV_UP 1
 #define PDA_EV_DOWN 2
 #define PDA_EV_LEFT 3
@@ -10,8 +10,9 @@
 #define PDA_EV_LONGSELECT 6
 #define PDA_EV_NEWLINE 7
 #define PDA_EV_BACK 8
-#define PDA_EV_CHAR 9
-#define PDA_EV_DELETE 10
+#define PDA_EV_SPACE 9
+#define PDA_EV_CHAR 10
+#define PDA_EV_DELETE 11
 
 struct InputEventP {
   uint8_t ev;
@@ -44,3 +45,18 @@ bool pdaTimeSynced();
 void clockApp();
 void calendarApp();
 void todoApp();
+
+// Shared to-do task storage (used by todoApp and calendarApp)
+// File format per line: "[ ] task text" or "[x] task text", optionally
+// followed by " @YYYY-MM-DD" for a due date.
+#define TODO_MAX_TASKS 32
+#define TODO_MAX_LEN 60
+struct TodoTask {
+  char text[TODO_MAX_LEN];
+  bool done;
+  int dueYear, dueMonth, dueDay;  // 0 = no date
+};
+// Returns task count; fills the shared task array.
+int todoLoadTasks(TodoTask *tasks, int maxN);
+bool todoSaveTasks(TodoTask *tasks, int n);
+int todoCountForDate(int y, int m, int d);

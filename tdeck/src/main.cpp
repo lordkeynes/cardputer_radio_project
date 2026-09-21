@@ -211,14 +211,23 @@ static void drawTitle(const char *title) {
   gfx->setTextSize(1);
 }
 
+// Scrolling menu list geometry: rows of 30px in the area y=30..SCREEN_H-18.
+#define MENU_ROW_H 30
+#define MENU_TOP 30
+static int menuVisibleRows() {
+  int area = SCREEN_H - 18 - MENU_TOP;
+  int rows = area / MENU_ROW_H;
+  return rows < 1 ? 1 : rows;
+}
 static int itemY(int i, int n) {
-  int h = (n > 4) ? 34 : (SCREEN_H - 44) / n;
-  return 34 + i * h;
+  (void)n;
+  return MENU_TOP + i * MENU_ROW_H + 4;
+}
+static int itemH(int n) {
+  (void)n;
+  return MENU_ROW_H - 4;
 }
 
-static int itemH(int n) {
-  return (n > 4) ? 30 : (SCREEN_H - 44) / n - 4;
-}
 
 static void drawStatus(const char *msg) {
   gfx->setTextSize(1);
@@ -234,19 +243,31 @@ static uint32_t uiGen = 0;
 
 static void drawMenuList(const char *title, const char *const *items, int n, int sel, const char *status) {
   static int lastSel = -1;
+  static int lastTop = 0;          // first visible item index
   static const char *lastTitle = NULL;
   static const char *const *lastItems = NULL;
   static int lastN = 0;
   static uint32_t lastGen = 0;
-  if (uiGen != lastGen || title != lastTitle || lastSel < 0 || items != lastItems || n != lastN) {
+  int visible = menuVisibleRows();
+  // Keep selection inside the visible window; scroll when it leaves.
+  int top = lastTop;
+  if (sel < top) top = sel;
+  if (sel >= top + visible) top = sel - visible + 1;
+  if (top > n - 1) top = n > 0 ? n - 1 : 0;
+  if (top < 0) top = 0;
+  bool fullRepaint = (uiGen != lastGen || title != lastTitle || lastSel < 0 ||
+                      items != lastItems || n != lastN || top != lastTop);
+  if (fullRepaint) {
     lastGen = uiGen;
     drawTitle(title);
     lastTitle = title;
     lastItems = items;
     lastN = n;
     lastSel = -1;
-    for (int i = 0; i < n; i++) {
-      int y = itemY(i, n);
+    // Clear the list area (title stays)
+    gfx->fillRect(0, MENU_TOP - 4, SCREEN_W, SCREEN_H - 18 - (MENU_TOP - 4), BLACK);
+    for (int i = top; i < n && i < top + visible; i++) {
+      int y = itemY(i - top, n);
       if (i == sel) {
         gfx->fillRect(0, y - 4, SCREEN_W, itemH(n), RGB565(0, 120, 255));
         gfx->setTextColor(BLACK, RGB565(0, 120, 255));
@@ -257,6 +278,17 @@ static void drawMenuList(const char *title, const char *const *items, int n, int
       gfx->setCursor(8, y);
       gfx->println(items[i]);
     }
+    // Scroll indicators
+    gfx->setTextSize(1);
+    gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+    if (top > 0) {
+      gfx->setCursor(SCREEN_W - 12, MENU_TOP + 2);
+      gfx->print("^");
+    }
+    if (top + visible < n) {
+      gfx->setCursor(SCREEN_W - 12, MENU_TOP + (visible - 1) * MENU_ROW_H + 8);
+      gfx->print("v");
+    }
     if (status) {
       gfx->setTextSize(1);
       gfx->setTextColor(WHITE, BLACK);
@@ -264,8 +296,8 @@ static void drawMenuList(const char *title, const char *const *items, int n, int
       gfx->println(status);
     }
   } else if (sel != lastSel) {
-    int yPrev = itemY(lastSel, n);
-    int yNew = itemY(sel, n);
+    int yPrev = itemY(lastSel - top, n);
+    int yNew = itemY(sel - top, n);
     gfx->fillRect(0, yPrev - 4, SCREEN_W, itemH(n), BLACK);
     gfx->setTextSize(2);
     gfx->setTextColor(WHITE, BLACK);
@@ -276,6 +308,7 @@ static void drawMenuList(const char *title, const char *const *items, int n, int
     gfx->setCursor(8, yNew);
     gfx->println(items[sel]);
   }
+  lastTop = top;
   lastSel = sel;
 }
 
@@ -669,17 +702,18 @@ static int textEditor(const String &path, char *buf, size_t bufSize, bool isNew)
 }
 
 static void notesApp() {
-  const char *items[] = {"New note", "Open note", "Delete note", "Back"};
+  const char *items[] = {"New note", "Open note", "Delete note", "To-do list", "Back"};
+  const int nItems = 5;
   int sel = 0;
   while (true) {
-    drawMenuList("Notes", items, 4, sel, NULL);
+    drawMenuList("Notes", items, nItems, sel, NULL);
     InputEvent e;
     if (!getInput(e, 50)) continue;
-    if (e.ev == EV_UP) sel = (sel + 3) % 4;
-    else if (e.ev == EV_DOWN) sel = (sel + 1) % 4;
+    if (e.ev == EV_UP) sel = (sel + nItems - 1) % nItems;
+    else if (e.ev == EV_DOWN) sel = (sel + 1) % nItems;
     else if (e.ev == EV_BACK || (e.ev == EV_LEFT) || e.ev == EV_LONGSELECT) return;
     else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
-      if (sel == 3) return;
+      if (sel == 4) return;
       if (sel == 0) {
         String names[MAX_FILES];
         int count = 0;
@@ -704,6 +738,8 @@ static void notesApp() {
         if (pickFile("Delete note", NOTE_DIR, ".txt", path) >= 0) {
           SD.remove(path);
         }
+      } else if (sel == 3) {
+        todoApp();
       }
       uiScreenChanged();
     }
@@ -924,9 +960,9 @@ static void playbackApp() {
 
 // ---------- Main menu ----------
 static void mainMenu() {
-  const char *items[] = {"Notes", "To-do", "Recorder", "Play recs", "Map",
+  const char *items[] = {"Notes", "Recorder", "Play recs", "Map",
                          "Clock", "Calendar", "WiFi", "Battery"};
-  const int nItems = 9;
+  const int nItems = 8;
   int sel = 0;
   char statusBuf[40];
   while (true) {
@@ -940,14 +976,13 @@ static void mainMenu() {
     else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
       switch (sel) {
         case 0: notesApp(); break;
-        case 1: todoApp(); break;
-        case 2: recorderApp(); break;
-        case 3: playbackApp(); break;
-        case 4: mapApp(); break;
-        case 5: clockApp(); break;
-        case 6: calendarApp(); break;
-        case 7: wifiApp(); break;
-        case 8: {
+        case 1: recorderApp(); break;
+        case 2: playbackApp(); break;
+        case 3: mapApp(); break;
+        case 4: clockApp(); break;
+        case 5: calendarApp(); break;
+        case 6: wifiApp(); break;
+        case 7: {
           gfx->fillScreen(BLACK);
           gfx->setTextSize(2);
           gfx->setTextColor(RGB565(0, 255, 160), BLACK);

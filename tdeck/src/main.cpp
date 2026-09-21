@@ -29,7 +29,7 @@
 Arduino_DataBus *bus = new Arduino_HWSPI(BOARD_TFT_DC, BOARD_TFT_CS);
 Arduino_GFX *gfx = new Arduino_ST7789(bus, GFX_NOT_DEFINED /* RST */, 1 /* rotation */, false /* IPS */, 320, 240);
 
-enum AppEvent { EV_NONE, EV_UP, EV_DOWN, EV_LEFT, EV_RIGHT, EV_SELECT, EV_BACK, EV_SPACE, EV_CHAR, EV_DELETE };
+enum AppEvent { EV_NONE, EV_UP, EV_DOWN, EV_LEFT, EV_RIGHT, EV_SELECT, EV_LONGSELECT, EV_BACK, EV_SPACE, EV_CHAR, EV_DELETE };
 
 struct InputEvent {
   AppEvent ev;
@@ -81,6 +81,7 @@ static void trackballTask(void *pv) {
   pinMode(BOARD_BOOT_PIN, INPUT_PULLUP);
   for (int i = 0; i < 4; i++) pinMode(dir_pins[i], INPUT_PULLUP);
   bool lastBoot = true;
+  unsigned long bootDownAt = 0;
   while (true) {
     for (int i = 0; i < 4; i++) {
       bool dir = digitalRead(dir_pins[i]);
@@ -94,10 +95,19 @@ static void trackballTask(void *pv) {
     }
     bool boot = digitalRead(BOARD_BOOT_PIN);
     if (boot == false && lastBoot == true) {
+      bootDownAt = millis();
+    } else if (boot == false && bootDownAt != 0 && millis() - bootDownAt > 600) {
+      InputEvent e = {};
+      e.ts = millis();
+      e.ev = EV_LONGSELECT;
+      xQueueSend(inputQueue, &e, 0);
+      bootDownAt = 0;
+    } else if (boot == true && lastBoot == false && bootDownAt != 0) {
       InputEvent e = {};
       e.ts = millis();
       e.ev = EV_SELECT;
       xQueueSend(inputQueue, &e, 0);
+      bootDownAt = 0;
     }
     lastBoot = boot;
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -233,57 +243,55 @@ static int pickFile(const char *title, const char *dir, const char *ext, String 
   String names[MAX_FILES];
   int count = 0;
   listFiles(dir, names, count, ext);
-  const int visible = 14;
-  int sel = 0;
-  int scroll = 0;
+  const int visible = 13;
+  int sel = -1;
+  int scroll = -1;
   bool needsRedraw = true;
   while (true) {
     if (needsRedraw) {
       drawTitle(title);
       gfx->setTextSize(1);
-      if (count == 0) {
-        gfx->setTextColor(WHITE, BLACK);
-        gfx->setCursor(8, 34);
-        gfx->println("No files found.");
-        gfx->setCursor(8, 50);
-        gfx->println("Select/trackball-click = back");
+      if (sel == -1) {
+        gfx->fillRect(0, 28, SCREEN_W, 13, RGB565(0, 120, 255));
+        gfx->setTextColor(BLACK, RGB565(0, 120, 255));
+      } else {
+        gfx->setTextColor(RGB565(255, 255, 0), BLACK);
       }
+      gfx->setCursor(6, 30);
+      gfx->println("< Back");
+      gfx->setTextColor(WHITE, BLACK);
       int maxScroll = count > visible ? count - visible : 0;
       if (scroll > maxScroll) scroll = maxScroll;
-      if (scroll < 0) scroll = 0;
-      for (int i = 0; i < visible && scroll + i < count; i++) {
-        int y = 30 + i * 14;
-        if (scroll + i == sel) {
+      if (scroll < -1) scroll = -1;
+      for (int i = 0; i < visible && scroll + 1 + i < count; i++) {
+        int y = 44 + i * 14;
+        int idx = scroll + 1 + i;
+        if (idx == sel) {
           gfx->fillRect(0, y - 2, SCREEN_W, 13, RGB565(0, 120, 255));
           gfx->setTextColor(BLACK, RGB565(0, 120, 255));
         } else {
           gfx->setTextColor(WHITE, BLACK);
         }
         gfx->setCursor(6, y);
-        gfx->println(baseName(names[scroll + i]));
+        gfx->println(baseName(names[idx]));
       }
       gfx->setTextColor(WHITE, BLACK);
       gfx->setCursor(4, SCREEN_H - 10);
-      gfx->println("Click = open  |  Left arrow = back");
+      gfx->println("Click = select  Long-click = back");
       needsRedraw = false;
     }
     InputEvent e;
     if (!getInput(e, 50)) continue;
-    if (e.ev == EV_UP && sel > 0) { sel--; needsRedraw = true; }
+    if (e.ev == EV_UP && sel > -1) { sel--; needsRedraw = true; }
     else if (e.ev == EV_DOWN && sel < count - 1) { sel++; needsRedraw = true; }
     else if (e.ev == EV_SELECT) {
-      if (count == 0) return -1;
+      if (sel == -1 || count == 0) return -1;
       outPath = names[sel];
       return sel;
-    } else if (e.ev == EV_BACK || e.ev == EV_LEFT) return -1;
-    else if (e.ev == EV_RIGHT) {
-      int maxScroll = count > visible ? count - visible : 0;
-      scroll = (scroll + visible < count) ? scroll + visible : maxScroll;
-      sel = scroll;
-      needsRedraw = true;
-    }
-    if (sel < scroll) { scroll = sel; needsRedraw = true; }
-    if (sel >= scroll + visible) { scroll = sel - visible + 1; needsRedraw = true; }
+    } else if (e.ev == EV_BACK || e.ev == EV_LEFT || e.ev == EV_LONGSELECT) return -1;
+    if (sel == -1) { if (scroll != -1) { scroll = -1; needsRedraw = true; } }
+    else if (sel < scroll + 1) { scroll = sel - 1; needsRedraw = true; }
+    else if (sel >= scroll + 1 + visible) { scroll = sel - visible; needsRedraw = true; }
   }
 }
 
@@ -332,7 +340,7 @@ static int textEditor(const String &path, char *buf, size_t bufSize, bool isNew)
         gfx->setTextColor(WHITE, BLACK);
         for (int j = start; j < end; j++) gfx->print(buf[j]);
       }
-      drawStatus("Enter=save  Backspace=del  Left=exit");
+      drawStatus("Enter=save  Backspace=del  Long-click=exit");
     }
     InputEvent e;
     if (!getInput(e, 50)) continue;
@@ -373,6 +381,7 @@ static int textEditor(const String &path, char *buf, size_t bufSize, bool isNew)
         return -1;
       }
       case EV_BACK: return -1;
+      case EV_LONGSELECT: return -1;
       default: break;
     }
   }
@@ -387,7 +396,7 @@ static void notesApp() {
     if (!getInput(e, 50)) continue;
     if (e.ev == EV_UP) sel = (sel + 3) % 4;
     else if (e.ev == EV_DOWN) sel = (sel + 1) % 4;
-    else if (e.ev == EV_BACK || (e.ev == EV_LEFT)) return;
+    else if (e.ev == EV_BACK || (e.ev == EV_LEFT) || e.ev == EV_LONGSELECT) return;
     else if (e.ev == EV_SELECT) {
       if (sel == 3) return;
       if (sel == 0) {
@@ -487,14 +496,15 @@ static void recorderApp() {
   drawTitle("Recorder");
   gfx->setTextSize(2);
   gfx->setCursor(8, 40);
-  gfx->println("Click/Enter = start REC");
-  gfx->setCursor(8, 60);
-  gfx->println("Left arrow = back");
+  gfx->println("Click = start REC");
+  gfx->setTextSize(1);
+  gfx->setCursor(8, 70);
+  gfx->println("Long-click = back");
   drawStatus("Ready");
   InputEvent e;
   while (getInput(e, portMAX_DELAY)) {
     if (e.ev == EV_SELECT) break;
-    if (e.ev == EV_BACK || e.ev == EV_LEFT) return;
+    if (e.ev == EV_BACK || e.ev == EV_LEFT || e.ev == EV_LONGSELECT) return;
   }
 
   String names[MAX_FILES];
@@ -542,7 +552,7 @@ static void recorderApp() {
     f.write((uint8_t *)audioBuf, bytesRead);
     totalSamples += samples;
     while (xQueueReceive(inputQueue, &e, 0) == pdTRUE) {
-      if (e.ev == EV_BACK || e.ev == EV_SELECT || e.ev == EV_LEFT) { stop = true; }
+      if (e.ev == EV_BACK || e.ev == EV_SELECT || e.ev == EV_LEFT || e.ev == EV_LONGSELECT) { stop = true; }
     }
     uint32_t secs = (millis() - recStart) / 1000;
     gfx->setTextSize(2);

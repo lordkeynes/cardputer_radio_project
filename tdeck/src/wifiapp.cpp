@@ -8,6 +8,7 @@
 #include <Arduino_GFX_Library.h>
 #include "utilities.h"
 #include "pda.h"
+#include "theme.h"
 
 extern Arduino_GFX *gfx;
 extern bool sdOk;
@@ -84,11 +85,11 @@ bool wifiAutoConnect() {
 bool wifiConnected() { return wifiUp && WiFi.status() == WL_CONNECTED; }
 
 // Simple text prompt at the bottom of the screen; returns entered string.
-static bool promptText(const char *label, String &out) {
+bool promptText(const char *label, String &out) {
   out = "";
   gfx->fillRect(0, SCREEN_H - 40, SCREEN_W, 40, BLACK);
   gfx->setTextSize(1);
-  gfx->setTextColor(RGB565(255, 255, 0), BLACK);
+  gfx->setTextColor(TERM_ACCENT, BLACK);
   gfx->setCursor(8, SCREEN_H - 36);
   gfx->print(label);
   gfx->print(": ");
@@ -125,16 +126,16 @@ void wifiApp() {
       rescanning = false;
       gfx->fillScreen(BLACK);
       gfx->setTextSize(2);
-      gfx->setTextColor(RGB565(0, 255, 160), BLACK);
+      gfx->setTextColor(TERM_GREEN, BLACK);
       gfx->setCursor(8, 8);
       gfx->print("WiFi");
       gfx->setTextSize(1);
       if (wifiConnected()) {
-        gfx->setTextColor(RGB565(0, 255, 0), BLACK);
-        gfx->setCursor(240, 12);
-        gfx->printf("IP %s", WiFi.localIP().toString().c_str());
+        gfx->setTextColor(TERM_GREEN, BLACK);
+        gfx->setCursor(8, 26);
+        gfx->printf("IP: %s", WiFi.localIP().toString().c_str());
       }
-      gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+      gfx->setTextColor(TERM_DIM, BLACK);
       gfx->setCursor(8, 26);
       gfx->print("Scanning...");
       nScan = 0;
@@ -161,23 +162,23 @@ void wifiApp() {
         int idx = top + i;
         int y = 40 + i * rowH;
         if (idx == sel) {
-          gfx->fillRect(0, y - 2, SCREEN_W, rowH - 2, RGB565(0, 120, 255));
-          gfx->setTextColor(BLACK, RGB565(0, 120, 255));
+          gfx->fillRect(0, y - 2, SCREEN_W, rowH - 2, TERM_SEL_BG);
+          gfx->setTextColor(BLACK, TERM_SEL_BG);
         } else {
           gfx->setTextColor(WHITE, BLACK);
         }
         gfx->setCursor(8, y);
         gfx->print(ssids[idx]);
-        gfx->setTextColor(RGB565(150, 150, 150),
-                          (idx == sel) ? RGB565(0, 120, 255) : BLACK);
+        gfx->setTextColor(TERM_DIM,
+                          (idx == sel) ? TERM_SEL_BG : BLACK);
         gfx->setCursor(240, y);
         gfx->printf("%d dBm", (int)rssis[idx]);
       }
-      gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+      gfx->setTextColor(TERM_DIM, BLACK);
       gfx->setCursor(4, SCREEN_H - 20);
       gfx->print("Up/Down pick  r rescan  Click join  Long-click back");
       if (nScan == 0) {
-        gfx->setTextColor(RGB565(255, 255, 0), BLACK);
+        gfx->setTextColor(TERM_ACCENT, BLACK);
         gfx->setCursor(8, 44);
         gfx->print("No networks found - press r");
       }
@@ -197,7 +198,7 @@ void wifiApp() {
         String pass;
         gfx->fillRect(0, SCREEN_H - 40, SCREEN_W, 40, BLACK);
         gfx->setTextSize(1);
-        gfx->setTextColor(RGB565(255, 255, 0), BLACK);
+        gfx->setTextColor(TERM_ACCENT, BLACK);
         gfx->setCursor(8, SCREEN_H - 36);
         gfx->printf("Joining %s ...", ssid.c_str());
         // Try known credentials first
@@ -218,7 +219,7 @@ void wifiApp() {
         gfx->setCursor(8, SCREEN_H - 36);
         if (WiFi.status() == WL_CONNECTED) {
           wifiUp = true;
-          gfx->setTextColor(RGB565(0, 255, 0), BLACK);
+          gfx->setTextColor(TERM_GREEN, BLACK);
           gfx->printf("Connected: %s", WiFi.localIP().toString().c_str());
           // Save/update credentials
           int slot = -1;
@@ -230,7 +231,7 @@ void wifiApp() {
             saveKnown(known, nKnown);
           }
         } else {
-          gfx->setTextColor(RGB565(255, 80, 80), BLACK);
+          gfx->setTextColor(TERM_RED, BLACK);
           gfx->print("Failed to connect");
         }
         delay(1200);

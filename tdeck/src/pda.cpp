@@ -9,6 +9,7 @@
 #include <Arduino_GFX_Library.h>
 #include "utilities.h"
 #include "pda.h"
+#include "theme.h"
 
 extern Arduino_GFX *gfx;
 extern QueueHandle_t inputQueue;
@@ -143,10 +144,10 @@ void clockApp() {
       for (int m = 0; m < MODE_COUNT; m++) {
         int x = 8 + m * 70;
         if (m == mode) {
-          gfx->fillRect(x, 0, 66, 16, RGB565(0, 120, 255));
-          gfx->setTextColor(BLACK, RGB565(0, 120, 255));
+          gfx->fillRect(x, 0, 66, 16, TERM_SEL_BG);
+          gfx->setTextColor(BLACK, TERM_SEL_BG);
         } else {
-          gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+          gfx->setTextColor(TERM_DIM, BLACK);
         }
         gfx->setCursor(x + 8, 4);
         gfx->print(modeNames[m]);
@@ -160,7 +161,7 @@ void clockApp() {
         strftime(big, sizeof(big), "%H:%M", &lt);
         strftime(date, sizeof(date), "%a %b %d %Y", &lt);
         gfx->setTextSize(4);
-        gfx->setTextColor(RGB565(0, 255, 160), BLACK);
+        gfx->setTextColor(TERM_GREEN, BLACK);
         gfx->setCursor(40, 80);
         gfx->print(big);
         char secs[8];
@@ -174,7 +175,7 @@ void clockApp() {
         gfx->setCursor(60, 140);
         gfx->print(date);
         gfx->setTextSize(1);
-        gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+        gfx->setTextColor(TERM_DIM, BLACK);
         gfx->setCursor(60, 170);
         gfx->print(timeSynced ? "time: GPS" : "time: not synced (need GPS fix)");
       } else if (mode == MODE_STOPWATCH) {
@@ -184,7 +185,7 @@ void clockApp() {
         uint32_t m = (el / 60000) % 60;
         uint32_t h = el / 3600000;
         gfx->setTextSize(4);
-        gfx->setTextColor(RGB565(0, 255, 160), BLACK);
+        gfx->setTextColor(TERM_GREEN, BLACK);
         gfx->setCursor(30, 90);
         gfx->printf("%02u:%02u:%02u", (unsigned)h, (unsigned)m, (unsigned)s);
         gfx->setTextSize(2);
@@ -200,7 +201,7 @@ void clockApp() {
         if (remain < 0) remain = 0;
         if (!timerRunning && timerEditing) {
           gfx->setTextSize(4);
-          gfx->setTextColor(RGB565(255, 255, 0), BLACK);
+          gfx->setTextColor(TERM_ACCENT, BLACK);
           gfx->setCursor(60, 90);
           gfx->printf("%02d:%02d", timerSetSec / 60, timerSetSec % 60);
           gfx->setTextSize(1);
@@ -209,7 +210,7 @@ void clockApp() {
           gfx->print("Edit: +/- min  u/d +10s  Click = start");
         } else {
           gfx->setTextSize(4);
-          gfx->setTextColor(timerRunning ? RGB565(255, 120, 0) : RGB565(0, 255, 160), BLACK);
+          gfx->setTextColor(timerRunning ? RGB565(255, 120, 0) : TERM_GREEN, BLACK);
           gfx->setCursor(60, 90);
           gfx->printf("%02d:%02d", remain / 60, remain % 60);
           gfx->setTextSize(1);
@@ -219,7 +220,7 @@ void clockApp() {
         }
       }
       gfx->setTextSize(1);
-      gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+      gfx->setTextColor(TERM_DIM, BLACK);
       gfx->setCursor(4, SCREEN_H - 12);
       gfx->print("U/D = mode  Long-click = back");
     }
@@ -298,13 +299,13 @@ void calendarApp() {
       const char *months[] = {"Jan","Feb","Mar","Apr","May","Jun",
                               "Jul","Aug","Sep","Oct","Nov","Dec"};
       gfx->setTextSize(2);
-      gfx->setTextColor(RGB565(0, 255, 160), BLACK);
+      gfx->setTextColor(TERM_GREEN, BLACK);
       gfx->setCursor(90, 8);
       gfx->printf("%s %d", months[viewMonth - 1], viewYear);
 
       const char *dows[] = {"Su","Mo","Tu","We","Th","Fr","Sa"};
       gfx->setTextSize(1);
-      gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+      gfx->setTextColor(TERM_DIM, BLACK);
       for (int i = 0; i < 7; i++) {
         gfx->setCursor(18 + i * 44, 32);
         gfx->print(dows[i]);
@@ -334,11 +335,11 @@ void calendarApp() {
         bool isSel = (d == selDay);
         int nDue = todoCountForDate(viewYear, viewMonth, d);
         if (isSel) {
-          gfx->fillRect(x, y - 2, 40, 24, RGB565(0, 120, 255));
-          gfx->setTextColor(BLACK, RGB565(0, 120, 255));
+          gfx->fillRect(x, y - 2, 40, 24, TERM_SEL_BG);
+          gfx->setTextColor(BLACK, TERM_SEL_BG);
         } else if (isToday) {
-          gfx->drawRect(x, y - 2, 40, 24, RGB565(0, 255, 160));
-          gfx->setTextColor(RGB565(0, 255, 160), BLACK);
+          gfx->drawRect(x, y - 2, 40, 24, TERM_GREEN);
+          gfx->setTextColor(TERM_GREEN, BLACK);
         } else {
           gfx->setTextColor(WHITE, BLACK);
         }
@@ -354,7 +355,7 @@ void calendarApp() {
         static TodoTask tasks[TODO_MAX_TASKS];
         int n = todoLoadTasks(tasks, TODO_MAX_TASKS);
         int shown = 0;
-        gfx->setTextColor(RGB565(255, 255, 0), BLACK);
+        gfx->setTextColor(TERM_ACCENT, BLACK);
         gfx->setCursor(8, 200);
         gfx->printf("%d %s:", selDay, months[viewMonth - 1]);
         for (int i = 0; i < n && shown < 3; i++) {
@@ -369,12 +370,12 @@ void calendarApp() {
         }
         if (shown == 0) {
           gfx->setCursor(8, 212);
-          gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+          gfx->setTextColor(TERM_DIM, BLACK);
           gfx->print("(no tasks)");
         }
       }
       gfx->setTextSize(1);
-      gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+      gfx->setTextColor(TERM_DIM, BLACK);
       gfx->setCursor(4, SCREEN_H - 12);
       gfx->print("U/D month L/R day Click=today Long=back");
     }
@@ -491,11 +492,11 @@ void todoApp() {
       needsRedraw = false;
       gfx->fillScreen(BLACK);
       gfx->setTextSize(2);
-      gfx->setTextColor(RGB565(0, 255, 160), BLACK);
+      gfx->setTextColor(TERM_GREEN, BLACK);
       gfx->setCursor(8, 8);
       gfx->print("To-do");
       gfx->setTextSize(1);
-      gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+      gfx->setTextColor(TERM_DIM, BLACK);
       gfx->setCursor(4, SCREEN_H - 20);
       gfx->print("Click=done n=new d=del t=date today Long=back");
       const int visible = 8;
@@ -505,8 +506,8 @@ void todoApp() {
         int y = 34 + i * 22;
         int idx = top + i;
         if (idx == sel) {
-          gfx->fillRect(0, y - 2, SCREEN_W, 20, RGB565(0, 120, 255));
-          gfx->setTextColor(BLACK, RGB565(0, 120, 255));
+          gfx->fillRect(0, y - 2, SCREEN_W, 20, TERM_SEL_BG);
+          gfx->setTextColor(BLACK, TERM_SEL_BG);
         } else {
           gfx->setTextColor(WHITE, BLACK);
         }
@@ -520,7 +521,7 @@ void todoApp() {
       }
       if (nTasks == 0) {
         gfx->setTextSize(1);
-        gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+        gfx->setTextColor(TERM_DIM, BLACK);
         gfx->setCursor(8, 34);
         gfx->print("(no tasks - press n)");
       }
@@ -540,7 +541,7 @@ void todoApp() {
           int tl = 0;
           gfx->fillRect(0, SCREEN_H - 40, SCREEN_W, 20, BLACK);
           gfx->setTextSize(1);
-          gfx->setTextColor(RGB565(255, 255, 0), BLACK);
+          gfx->setTextColor(TERM_ACCENT, BLACK);
           gfx->setCursor(8, SCREEN_H - 36);
           gfx->print("Task: ");
           bool collecting = true;

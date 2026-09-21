@@ -14,6 +14,10 @@
 #include "utilities.h"
 #include "mapapp.h"
 #include "pda.h"
+#include "theme.h"
+#include "apps.h"
+#include "games.h"
+#include "media.h"
 
 #define SCREEN_W 320
 #define SCREEN_H 240
@@ -206,7 +210,7 @@ static void drawTitleBarIndicators() {
   int x = SCREEN_W - 4;
   // Battery percent
   int pct = batteryPercent();
-  uint16_t battColor = pct > 50 ? RGB565(0, 255, 0) : pct > 20 ? RGB565(255, 255, 0) : RGB565(255, 80, 80);
+  uint16_t battColor = pct > 50 ? TERM_GREEN : pct > 20 ? TERM_ACCENT : TERM_RED;
   char b[8];
   snprintf(b, sizeof(b), "%d%%", pct);
   x -= strlen(b) * 6;
@@ -217,7 +221,7 @@ static void drawTitleBarIndicators() {
   // WiFi indicator
   if (wifiConnected()) {
     x -= 12;
-    gfx->setTextColor(RGB565(0, 200, 255), BLACK);
+    gfx->setTextColor(TERM_CYAN, BLACK);
     gfx->setCursor(x, 6);
     gfx->print("~");
     gfx->print("~");
@@ -226,11 +230,11 @@ static void drawTitleBarIndicators() {
 static void drawTitle(const char *title) {
   gfx->fillScreen(BLACK);
   gfx->setTextSize(1);
-  gfx->setTextColor(RGB565(0, 160, 255), BLACK);
+  gfx->setTextColor(TERM_GREEN, BLACK);
   gfx->setCursor(4, 7);
   gfx->println(title);
   drawTitleBarIndicators();
-  gfx->drawFastHLine(0, 18, SCREEN_W, RGB565(0, 120, 255));
+  gfx->drawFastHLine(0, 18, SCREEN_W, TERM_DIM);
   gfx->setTextColor(WHITE, BLACK);
   gfx->setTextSize(1);
 }
@@ -255,7 +259,7 @@ static int itemH(int n) {
 
 static void drawStatus(const char *msg) {
   gfx->setTextSize(1);
-  gfx->setTextColor(RGB565(255, 255, 0), BLACK);
+  gfx->setTextColor(TERM_ACCENT, BLACK);
   gfx->setCursor(4, SCREEN_H - 10);
   gfx->print("                               ");
   gfx->setCursor(4, SCREEN_H - 10);
@@ -293,8 +297,8 @@ static void drawMenuList(const char *title, const char *const *items, int n, int
     for (int i = top; i < n && i < top + visible; i++) {
       int y = itemY(i - top, n);
       if (i == sel) {
-        gfx->fillRect(0, y - 4, SCREEN_W, itemH(n), RGB565(0, 120, 255));
-        gfx->setTextColor(BLACK, RGB565(0, 120, 255));
+        gfx->fillRect(0, y - 4, SCREEN_W, itemH(n), TERM_SEL_BG);
+        gfx->setTextColor(BLACK, TERM_SEL_BG);
       } else {
         gfx->setTextColor(WHITE, BLACK);
       }
@@ -328,7 +332,7 @@ static void drawMenuList(const char *title, const char *const *items, int n, int
     gfx->setCursor(8, yPrev);
     gfx->println(items[lastSel]);
     gfx->fillRect(0, yNew - 4, SCREEN_W, itemH(n), RGB565(0, 120, 255));
-    gfx->setTextColor(BLACK, RGB565(0, 120, 255));
+    gfx->setTextColor(BLACK, TERM_SEL_BG);
     gfx->setCursor(8, yNew);
     gfx->println(items[sel]);
   }
@@ -348,7 +352,7 @@ static bool sdInit() {
 }
 
 // ---------- GPS ----------
-static TinyGPSPlus gps;
+TinyGPSPlus gps;   // non-static: used by media.cpp wardrive
 static HardwareSerial &gpsSerial = Serial1;
 static uint32_t gpsCharsSeen = 0;
 
@@ -366,7 +370,7 @@ static bool gpsSetup() {
 }
 
 // Feed the parser whatever NMEA bytes have arrived; non-blocking.
-static void gpsPoll() {
+void gpsPoll() {
   while (gpsSerial.available()) { gps.encode(gpsSerial.read()); gpsCharsSeen++; }
 }
 
@@ -494,7 +498,7 @@ static void mapApp() {
       // status bar
       gfx->fillRect(0, SCREEN_H - 16, SCREEN_W, 16, BLACK);
       gfx->setTextSize(1);
-      gfx->setTextColor(RGB565(255, 255, 0), BLACK);
+      gfx->setTextColor(TERM_ACCENT, BLACK);
       gfx->setCursor(2, SCREEN_H - 12);
       snprintf(statusLine, sizeof(statusLine), "z%d %s %.5f,%.5f  sats:%d",
                mapZoom, hasFix ? "GPS" : "no-fix",
@@ -582,9 +586,9 @@ static int pickFile(const char *title, const char *dir, const char *ext, String 
       gfx->setTextSize(1);
       if (sel == -1) {
         gfx->fillRect(0, 28, SCREEN_W, 13, RGB565(0, 120, 255));
-        gfx->setTextColor(BLACK, RGB565(0, 120, 255));
+        gfx->setTextColor(BLACK, TERM_SEL_BG);
       } else {
-        gfx->setTextColor(RGB565(255, 255, 0), BLACK);
+        gfx->setTextColor(TERM_ACCENT, BLACK);
       }
       gfx->setCursor(6, 30);
       gfx->println("< Back");
@@ -597,7 +601,7 @@ static int pickFile(const char *title, const char *dir, const char *ext, String 
         int idx = scroll + 1 + i;
         if (idx == sel) {
           gfx->fillRect(0, y - 2, SCREEN_W, 13, RGB565(0, 120, 255));
-          gfx->setTextColor(BLACK, RGB565(0, 120, 255));
+          gfx->setTextColor(BLACK, TERM_SEL_BG);
         } else {
           gfx->setTextColor(WHITE, BLACK);
         }
@@ -1016,55 +1020,244 @@ static void playbackApp() {
   delay(1000);
 }
 
-// ---------- Main menu ----------
+// ---------- Icon launcher ----------
+
+static void batteryScreen() {
+  gfx->fillScreen(BLACK);
+  gfx->setTextSize(2);
+  gfx->setTextColor(TERM_GREEN, BLACK);
+  gfx->setCursor(20, 30);
+  gfx->print("Battery");
+  gfx->setTextSize(2);
+  gfx->setTextColor(WHITE, BLACK);
+  gfx->setCursor(20, 70);
+  gfx->printf("%d%%  %d mV", batteryPercent(), batteryMillivolts());
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+  gfx->setCursor(20, 110);
+  gfx->print("ADC raw sample; percent is an estimate from");
+  gfx->setCursor(20, 122);
+  gfx->print("voltage, not a calibrated fuel gauge.");
+  gfx->setCursor(4, SCREEN_H - 10);
+  gfx->setTextColor(WHITE, BLACK);
+  gfx->print("Any key = back");
+  InputEvent w;
+  while (!getInput(w, 50)) {}
+}
+
+// Vector icons in terminal green, drawn inside a 24x24 box at (x,y).
+static void drawAppIcon(int idx, int x, int y) {
+  uint16_t c = TERM_GREEN, d = TERM_DIM;
+  switch (idx) {
+    case 0:  // Notes: lined page
+      gfx->drawRect(x + 5, y + 2, 14, 20, c);
+      for (int i = 0; i < 5; i++) gfx->drawFastHLine(x + 8, y + 6 + i * 3, 8, d);
+      break;
+    case 1:  // Recorder: microphone
+      gfx->fillRoundRect(x + 9, y + 1, 6, 11, 3, c);
+      gfx->drawRect(x + 7, y + 5, 10, 8, d);
+      gfx->drawFastVLine(x + 12, y + 13, 4, c);
+      gfx->drawFastHLine(x + 8, y + 17, 9, c);
+      break;
+    case 2:  // Play recs: speaker + waves
+      gfx->fillTriangle(x + 4, y + 9, x + 9, y + 5, x + 9, y + 14, c);
+      gfx->fillRect(x + 4, y + 9, 5, 6, c);
+      gfx->drawCircle(x + 12, y + 10, 5, d);
+      gfx->drawCircle(x + 12, y + 10, 9, d);
+      break;
+    case 3:  // Map: folded map with route
+      gfx->drawRect(x + 3, y + 4, 18, 16, c);
+      gfx->drawFastVLine(x + 9, y + 4, 16, d);
+      gfx->drawFastVLine(x + 15, y + 4, 16, d);
+      gfx->drawLine(x + 4, y + 16, x + 8, y + 10, TERM_ACCENT);
+      gfx->drawLine(x + 8, y + 10, x + 14, y + 14, TERM_ACCENT);
+      gfx->drawLine(x + 14, y + 14, x + 20, y + 7, TERM_ACCENT);
+      break;
+    case 4:  // Clock
+      gfx->drawCircle(x + 12, y + 12, 10, c);
+      gfx->drawLine(x + 12, y + 12, x + 12, y + 5, c);
+      gfx->drawLine(x + 12, y + 12, x + 18, y + 15, TERM_BRIGHT);
+      break;
+    case 5:  // Calendar
+      gfx->drawRect(x + 3, y + 4, 18, 16, c);
+      gfx->drawFastHLine(x + 3, y + 9, 18, c);
+      gfx->fillRect(x + 6, y + 12, 4, 4, d);
+      gfx->drawFastVLine(x + 6, y + 1, 4, c);
+      gfx->drawFastVLine(x + 18, y + 1, 4, c);
+      break;
+    case 6:  // WiFi: arcs + dot
+      for (int r = 3; r <= 9; r += 3)
+        for (int a = 0; a < 5; a++) {
+          float ang = (90 - a * 45) * 3.14159f / 180.0f;
+          int px = x + 12 + (int)(r * cosf(ang));
+          int py = y + 15 - (int)(r * sinf(ang));
+          gfx->drawPixel(px, py, r == 3 ? c : d);
+        }
+      gfx->fillCircle(x + 12, y + 13, 2, TERM_BRIGHT);
+      break;
+    case 7:  // Battery
+      gfx->drawRect(x + 3, y + 7, 16, 10, c);
+      gfx->fillRect(x + 19, y + 10, 2, 4, c);
+      gfx->fillRect(x + 5, y + 9, 10, 6, TERM_BRIGHT);
+      break;
+    case 8:  // Calculator
+      gfx->drawRect(x + 4, y + 2, 16, 20, c);
+      gfx->fillRect(x + 6, y + 4, 12, 5, d);
+      for (int r = 0; r < 3; r++)
+        for (int q = 0; q < 3; q++)
+          gfx->fillRect(x + 6 + q * 4, y + 11 + r * 4, 3, 3, (r + q) % 2 ? d : c);
+      break;
+    case 9:  // Search: magnifier
+      gfx->drawCircle(x + 10, y + 10, 7, c);
+      gfx->drawLine(x + 15, y + 15, x + 21, y + 21, c);
+      gfx->drawLine(x + 16, y + 14, x + 22, y + 20, c);
+      break;
+    case 10:  // Contacts: person card
+      gfx->drawRect(x + 3, y + 3, 18, 18, c);
+      gfx->fillCircle(x + 10, y + 9, 3, TERM_BRIGHT);
+      gfx->fillCircle(x + 10, y + 18, 6, TERM_BRIGHT);
+      gfx->fillRect(x + 14, y + 12, 4, 2, d);
+      gfx->fillRect(x + 14, y + 16, 4, 2, d);
+      break;
+    case 11:  // Convert: two-way arrows
+      gfx->drawFastHLine(x + 5, y + 8, 14, c);
+      gfx->fillTriangle(x + 3, y + 8, x + 8, y + 5, x + 8, y + 11, c);
+      gfx->drawFastHLine(x + 5, y + 16, 14, c);
+      gfx->fillTriangle(x + 21, y + 16, x + 16, y + 13, x + 16, y + 19, c);
+      break;
+    case 12:  // Files: folder
+      gfx->drawFastHLine(x + 3, y + 5, 7, c);
+      gfx->drawFastVLine(x + 3, y + 5, 2, c);
+      gfx->drawRect(x + 3, y + 7, 18, 13, c);
+      gfx->drawFastHLine(x + 6, y + 12, 12, d);
+      gfx->drawFastHLine(x + 6, y + 16, 8, d);
+      break;
+    case 13:  // Ebook: open book
+      gfx->drawLine(x + 12, y + 5, x + 12, y + 20, c);
+      gfx->drawRect(x + 3, y + 4, 9, 14, c);
+      gfx->drawRect(x + 12, y + 4, 9, 14, c);
+      gfx->fillTriangle(x + 12, y + 20, x + 3, y + 18, x + 12, y + 23, c);
+      gfx->fillTriangle(x + 12, y + 20, x + 21, y + 18, x + 12, y + 23, c);
+      break;
+    case 14:  // Images: mountain frame
+      gfx->drawRect(x + 3, y + 4, 18, 16, c);
+      gfx->fillCircle(x + 9, y + 9, 2, TERM_ACCENT);
+      gfx->fillTriangle(x + 5, y + 18, x + 11, y + 10, x + 16, y + 18, d);
+      gfx->fillTriangle(x + 10, y + 18, x + 15, y + 13, x + 19, y + 18, TERM_BRIGHT);
+      break;
+    case 15:  // Wardrive: antenna + waves
+      gfx->drawFastVLine(x + 12, y + 8, 12, c);
+      gfx->fillTriangle(x + 9, y + 20, x + 15, y + 20, x + 12, y + 23, c);
+      for (int r = 4; r <= 7; r += 3)
+        for (int a = 0; a < 5; a++) {
+          float ang = (90 - a * 45) * 3.14159f / 180.0f;
+          int px = x + 12 + (int)(r * cosf(ang));
+          int py = y + 8 - (int)(r * sinf(ang));
+          gfx->drawPixel(px, py, d);
+        }
+      break;
+    case 16:  // Chess: pawn
+      gfx->fillCircle(x + 12, y + 6, 4, c);
+      gfx->fillTriangle(x + 9, y + 20, x + 15, y + 20, x + 13, y + 10, c);
+      gfx->fillTriangle(x + 9, y + 20, x + 15, y + 20, x + 11, y + 10, c);
+      gfx->fillRect(x + 7, y + 19, 10, 3, c);
+      break;
+    case 17:  // Go: board + stones
+      gfx->drawRect(x + 3, y + 3, 18, 18, c);
+      for (int i = 1; i <= 2; i++) {
+        gfx->drawFastHLine(x + 3, y + 3 + i * 6, 18, d);
+        gfx->drawFastVLine(x + 3 + i * 6, y + 3, 18, d);
+      }
+      gfx->fillCircle(x + 9, y + 9, 2, TERM_BRIGHT);
+      gfx->drawCircle(x + 15, y + 15, 2, TERM_BRIGHT);
+      break;
+    case 18:  // Solitaire: three cards
+      gfx->fillRect(x + 3, y + 6, 8, 11, d);
+      gfx->fillRect(x + 8, y + 4, 8, 11, c);
+      gfx->fillRect(x + 13, y + 8, 8, 11, TERM_BRIGHT);
+      break;
+    case 19:  // Checkers: board + men
+      for (int r = 0; r < 4; r++)
+        for (int q = 0; q < 4; q++)
+          if ((r + q) % 2) gfx->fillRect(x + 3 + q * 5, y + 3 + r * 5, 5, 5, d);
+      gfx->drawRect(x + 3, y + 3, 20, 20, c);
+      gfx->drawCircle(x + 13, y + 8, 2, TERM_BRIGHT);
+      gfx->fillCircle(x + 8, y + 18, 2, TERM_BRIGHT);
+      break;
+    default:
+      gfx->drawRect(x + 6, y + 6, 12, 12, c);
+      break;
+  }
+}
+
+static const char *const launcherLabels[] = {
+  "Notes", "Record", "Play", "Map", "Clock", "Cal", "WiFi", "Batt",
+  "Calc", "Search", "Contcts", "Convrt",
+  "Files", "Book", "Image", "Wardrv",
+  "Chess", "Go", "Solit", "Chkrs",
+};
+static void (*const launcherRun[])() = {
+  notesApp, recorderApp, playbackApp, mapApp,
+  clockApp, calendarApp, wifiApp, batteryScreen,
+  calcApp, searchApp, contactsApp, convertApp,
+  filesApp, ebookApp, imageApp, wardriveApp,
+  chessApp, goApp, solitaireApp, checkersApp,
+};
+static const int LAUNCHER_N = 20;
+#define LAUNCHER_COLS 4
+#define ICON_BOX 24
+#define CELL_W (SCREEN_W / LAUNCHER_COLS)
+#define CELL_H ((SCREEN_H - 18 - MENU_TOP) / 5)
+
+static void drawLauncherCell(int idx, int sel) {
+  int cx = idx % LAUNCHER_COLS, cy = idx / LAUNCHER_COLS;
+  int x = cx * CELL_W, y = MENU_TOP + cy * CELL_H;
+  uint16_t bg = (idx == sel) ? TERM_SEL_BG : BLACK;
+  gfx->fillRect(x, y, CELL_W, CELL_H, bg);
+  drawAppIcon(idx, x + (CELL_W - ICON_BOX) / 2, y + (CELL_H - ICON_BOX - 10) / 2);
+  gfx->setTextSize(1);
+  gfx->setTextColor((idx == sel) ? BLACK : TERM_DIM, bg);
+  const char *lb = launcherLabels[idx];
+  int tw = strlen(lb) * 6;
+  gfx->setCursor(x + (CELL_W - tw) / 2, y + CELL_H - 12);
+  gfx->print(lb);
+}
+
 static void mainMenu() {
-  const char *items[] = {"Notes", "Recorder", "Play recs", "Map",
-                         "Clock", "Calendar", "WiFi", "Battery"};
-  const int nItems = 8;
   int sel = 0;
-  char statusBuf[40];
+  static int lastSel = -1;
+  static uint32_t lastGen = 0;
   while (true) {
-    snprintf(statusBuf, sizeof(statusBuf), "%s", sdOk ? "SD OK" : "NO SD");
-    drawMenuList("T-Deck Plus", items, nItems, sel, statusBuf);
+    // Feed GPS parser while idle so time syncs at boot (first fix of the day).
+    gpsPoll();
+    if (!pdaTimeSynced() && gps.location.isValid() &&
+        gps.time.isValid() && gps.date.isValid()) {
+      pdaApplyGpsTime(gps.date.year(), gps.date.month(), gps.date.day(),
+                      gps.time.hour(), gps.time.minute(), gps.time.second());
+      Serial.println("[gps] time synced at boot");
+    }
+    if (uiGen != lastGen || lastSel < 0) {
+      lastGen = uiGen;
+      drawTitle("T-Deck Plus");
+      gfx->fillRect(0, MENU_TOP - 4, SCREEN_W, SCREEN_H - 18 - (MENU_TOP - 4), BLACK);
+      for (int i = 0; i < LAUNCHER_N; i++) drawLauncherCell(i, sel);
+      lastSel = sel;
+    } else if (sel != lastSel) {
+      int prev = lastSel;
+      drawLauncherCell(prev, sel);
+      drawLauncherCell(sel, sel);
+      lastSel = sel;
+    }
     InputEvent e;
     if (!getInput(e, 50)) continue;
-    if (e.ev == EV_UP) sel = (sel + nItems - 1) % nItems;
-    else if (e.ev == EV_DOWN) sel = (sel + 1) % nItems;
+    if (e.ev == EV_UP) sel = (sel + LAUNCHER_N - LAUNCHER_COLS) % LAUNCHER_N;
+    else if (e.ev == EV_DOWN) sel = (sel + LAUNCHER_COLS) % LAUNCHER_N;
+    else if (e.ev == EV_LEFT) sel = (sel + LAUNCHER_N - 1) % LAUNCHER_N;
+    else if (e.ev == EV_RIGHT) sel = (sel + 1) % LAUNCHER_N;
     else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
-      switch (sel) {
-        case 0: notesApp(); break;
-        case 1: recorderApp(); break;
-        case 2: playbackApp(); break;
-        case 3: mapApp(); break;
-        case 4: clockApp(); break;
-        case 5: calendarApp(); break;
-        case 6: wifiApp(); break;
-        case 7: {
-          gfx->fillScreen(BLACK);
-          gfx->setTextSize(2);
-          gfx->setTextColor(RGB565(0, 255, 160), BLACK);
-          gfx->setCursor(20, 30);
-          gfx->print("Battery");
-          gfx->setTextSize(2);
-          gfx->setTextColor(WHITE, BLACK);
-          gfx->setCursor(20, 70);
-          gfx->printf("%d%%  %d mV", batteryPercent(), batteryMillivolts());
-          gfx->setTextSize(1);
-          gfx->setTextColor(RGB565(150, 150, 150), BLACK);
-          gfx->setCursor(20, 110);
-          gfx->print("ADC raw sample; percent is an estimate from");
-          gfx->setCursor(20, 122);
-          gfx->print("voltage, not a calibrated fuel gauge.");
-          gfx->setCursor(4, SCREEN_H - 10);
-          gfx->setTextColor(WHITE, BLACK);
-          gfx->print("Any key = back");
-          InputEvent w;
-          while (!getInput(w, 50)) {}
-          break;
-        }
-        default: break;
-      }
+      launcherRun[sel]();
       uiScreenChanged();
+      lastSel = -1;  // force full redraw on return
     }
   }
 }

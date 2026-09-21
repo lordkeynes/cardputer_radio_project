@@ -29,7 +29,7 @@
 Arduino_DataBus *bus = new Arduino_HWSPI(BOARD_TFT_DC, BOARD_TFT_CS);
 Arduino_GFX *gfx = new Arduino_ST7789(bus, GFX_NOT_DEFINED /* RST */, 1 /* rotation */, false /* IPS */);
 
-enum AppEvent { EV_NONE, EV_UP, EV_DOWN, EV_LEFT, EV_RIGHT, EV_SELECT, EV_LONGSELECT, EV_BACK, EV_SPACE, EV_CHAR, EV_DELETE };
+enum AppEvent { EV_NONE, EV_UP, EV_DOWN, EV_LEFT, EV_RIGHT, EV_SELECT, EV_LONGSELECT, EV_NEWLINE, EV_BACK, EV_SPACE, EV_CHAR, EV_DELETE };
 
 struct InputEvent {
   AppEvent ev;
@@ -60,7 +60,7 @@ static void keyboardTask(void *pv) {
       InputEvent e = {};
       e.ts = millis();
       if (keyValue == '\n' || keyValue == '\r') {
-        e.ev = EV_SELECT;
+        e.ev = EV_NEWLINE;
       } else if (keyValue == 0x08 || keyValue == 0x7F) {
         e.ev = EV_DELETE;
       } else if (keyValue == 0x1B) {
@@ -295,7 +295,7 @@ static int pickFile(const char *title, const char *dir, const char *ext, String 
     if (!getInput(e, 50)) continue;
     if (e.ev == EV_UP && sel > -1) { sel--; needsRedraw = true; }
     else if (e.ev == EV_DOWN && sel < count - 1) { sel++; needsRedraw = true; }
-    else if (e.ev == EV_SELECT) {
+    else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
       if (sel == -1 || count == 0) return -1;
       outPath = names[sel];
       return sel;
@@ -351,7 +351,7 @@ static int textEditor(const String &path, char *buf, size_t bufSize, bool isNew)
         gfx->setTextColor(WHITE, BLACK);
         for (int j = start; j < end; j++) gfx->print(buf[j]);
       }
-      drawStatus("Enter=save  Backspace=del  Long-click=exit");
+      drawStatus("Click=save  Enter=newline  Bksp=del  Long-click=exit");
     }
     InputEvent e;
     if (!getInput(e, 50)) continue;
@@ -391,6 +391,15 @@ static int textEditor(const String &path, char *buf, size_t bufSize, bool isNew)
         }
         return -1;
       }
+      case EV_NEWLINE:
+        if (len < bufSize - 2 && cursor <= (int)len) {
+          memmove(buf + cursor + 1, buf + cursor, len - cursor);
+          buf[cursor++] = '\n';
+          len++;
+          buf[len] = '\0';
+          needsRedraw = true;
+        }
+        break;
       case EV_BACK: return -1;
       case EV_LONGSELECT: return -1;
       default: break;
@@ -408,7 +417,7 @@ static void notesApp() {
     if (e.ev == EV_UP) sel = (sel + 3) % 4;
     else if (e.ev == EV_DOWN) sel = (sel + 1) % 4;
     else if (e.ev == EV_BACK || (e.ev == EV_LEFT) || e.ev == EV_LONGSELECT) return;
-    else if (e.ev == EV_SELECT) {
+    else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
       if (sel == 3) return;
       if (sel == 0) {
         String names[MAX_FILES];
@@ -508,14 +517,14 @@ static void recorderApp() {
   drawTitle("Recorder");
   gfx->setTextSize(2);
   gfx->setCursor(8, 40);
-  gfx->println("Click = start REC");
+  gfx->println("Click/Enter = start REC");
   gfx->setTextSize(1);
   gfx->setCursor(8, 70);
   gfx->println("Long-click = back");
   drawStatus("Ready");
   InputEvent e;
   while (getInput(e, portMAX_DELAY)) {
-    if (e.ev == EV_SELECT) break;
+    if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) break;
     if (e.ev == EV_BACK || e.ev == EV_LEFT || e.ev == EV_LONGSELECT) return;
   }
 
@@ -642,7 +651,7 @@ static void playbackApp() {
     i2s_write(SPK_I2S_PORT, playBuf, n, &bytesWritten, portMAX_DELAY);
     InputEvent e;
     while (xQueueReceive(inputQueue, &e, 0) == pdTRUE) {
-      if (e.ev == EV_BACK || e.ev == EV_SELECT) stop = true;
+      if (e.ev == EV_BACK || e.ev == EV_SELECT || e.ev == EV_NEWLINE) stop = true;
     }
   }
   i2s_zero_dma_buffer(SPK_I2S_PORT);
@@ -662,7 +671,7 @@ static void mainMenu() {
     if (!getInput(e, 50)) continue;
     if (e.ev == EV_UP) sel = (sel + 2) % 3;
     else if (e.ev == EV_DOWN) sel = (sel + 1) % 3;
-    else if (e.ev == EV_SELECT) {
+    else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
       if (sel == 0) notesApp();
       else if (sel == 1) recorderApp();
       else playbackApp();

@@ -18,108 +18,293 @@ extern bool sdOk;
 bool promptText(const char *label, String &out);
 
 // ============================ Calculator ============================
+// Scientific calculator with an on-screen button grid (the T-Deck has no
+// touchscreen: trackball moves the selection, click presses; the keyboard
+// types directly too). Two button pages: basic and scientific.
+// Functions: sin cos tan asin acos atan (deg/rad), ln log, sqrt, cbrt,
+// x^y, 1/x, x!, %, pi, e, parentheses, memory (M+ MR MC), ANS.
+
+struct CalcBtn { const char *lbl; char code; };
+
+// codes:
+//  '0'-'9' digits, '.' point, '+','-','*','/','^','%','(',')' literals,
+//  'C' clear, '<' backspace, '=' evaluate, 'A' Ans, 'M' m+, 'R' mr, 'U' mc,
+//  'T' toggle page (2nd), 'D' deg/rad,
+//  's','c','t' sin cos tan, 'S','C0','T0' -> asin acos atan (unique codes below)
+static const CalcBtn calcBasic[6][5] = {
+  {{"7",'7'},{"8",'8'},{"9",'9'},{"/",'/'},{"C",'C'}},
+  {{"4",'4'},{"5",'5'},{"6",'6'},{"*",'*'},{"<",'<'}},
+  {{"1",'1'},{"2",'2'},{"3",'3'},{"-",'-'},{"(",'('}},
+  {{"0",'0'},{".",'.'},{"+",'+'},{"=",'='}},
+  {{"Ans",'A'},{"M+",'M'},{"MR",'R'},{"MC",'U'},{")",')'}},
+  {{"2nd",'T'},{"DEG",'D'},{"pi",'p'},{"e",'e'},{"!",'!'}},
+};
+static const CalcBtn calcSci[6][5] = {
+  {{"sin",'s'},{"cos",'c'},{"tan",'t'},{"ln",'n'},{"log",'g'}},
+  {{"asin",'S'},{"acos",'O'},{"atan",'Y'},{"sqrt",'q'},{"cbrt",'b'}},
+  {{"x^y",'P'},{"1/x",'I'},{"x^2",'Q'},{"%",'%'},{"Abs",'x'}},
+  {{"exp",'E'},{"(", '('},{")",')'},{"=",'='},{"C",'C'}},
+  {{"Ans",'A'},{"M+",'M'},{"MR",'R'},{"MC",'U'},{".",'.'}},
+  {{"2nd",'T'},{"DEG",'D'},{"0",'0'},{"1",'1'},{"2",'2'}},
+};
+
+static double calcFact(double n) {
+  if (n < 0 || n != (double)(long)n || n > 170) return NAN;
+  double r = 1;
+  for (long i = 2; i <= (long)n; i++) r *= i;
+  return r;
+}
+
+// recursive-descent expression evaluator
+struct CalcEval {
+  const char *s;
+  bool deg;
+  bool err;
+  double ans;
+  double parse() {
+    double v = parseSum();
+    if (*s) err = true;
+    return v;
+  }
+  double parseSum() {
+    double v = parseMul();
+    while (!err) {
+      if (*s == '+') { s++; v += parseMul(); }
+      else if (*s == '-') { s++; v -= parseMul(); }
+      else break;
+    }
+    return v;
+  }
+  double parseMul() {
+    double v = parsePow();
+    while (!err) {
+      if (*s == '*') { s++; v *= parsePow(); }
+      else if (*s == '/') { s++; double d = parsePow(); if (d == 0) err = true; else v /= d; }
+      else if (*s == '%') { s++; double d = parsePow(); if (d == 0) err = true; else v = fmod(v, d); }
+      else break;
+    }
+    return v;
+  }
+  double parsePow() {
+    double base = parseUnary();
+    if (*s == '^') { s++; double e = parsePow(); return pow(base, e); }
+    return base;
+  }
+  double parseUnary() {
+    while (*s == ' ') s++;
+    if (*s == '-') { s++; return -parseUnary(); }
+    if (*s == '+') { s++; return parseUnary(); }
+    return parseAtom();
+  }
+  double fnEval(int idx, double v) {
+    double a = deg ? v * M_PI / 180.0 : v;
+    switch (idx) {
+      case 0: return sin(a);
+      case 1: return cos(a);
+      case 2: return tan(a);
+      case 3: case 4: case 5: {
+        double r = (idx == 3) ? asin(v) : (idx == 4) ? acos(v) : atan(v);
+        return deg ? r * 180.0 / M_PI : r;
+      }
+      case 6: return (v <= 0) ? (err = true, 0.0) : log(v);
+      case 7: return (v <= 0) ? (err = true, 0.0) : log10(v);
+      case 8: return (v < 0) ? (err = true, 0.0) : sqrt(v);
+      case 9: return cbrt(v);
+      case 10: return fabs(v);
+      case 11: return exp(v);
+    }
+    return 0;
+  }
+  double parseAtom() {
+    while (*s == ' ') s++;
+    if (*s == '(') {
+      s++;
+      double v = parseSum();
+      if (*s != ')') { err = true; return 0; }
+      s++;
+      if (*s == '!') { s++; return calcFact(v); }
+      return v;
+    }
+    static const char *const fns[] = {"sin","cos","tan","asin","acos","atan",
+                                      "ln","log","sqrt","cbrt","abs","exp"};
+    const int NF = 12;
+    for (int i = 0; i < NF; i++) {
+      size_t len = strlen(fns[i]);
+      if (strncmp(s, fns[i], len) == 0) {
+        s += len;
+        if (*s != '(') { err = true; return 0; }
+        s++;
+        double v = parseSum();
+        if (*s != ')') { err = true; return 0; }
+        s++;
+        return fnEval(i, v);
+      }
+    }
+    if (strncmp(s, "pi", 2) == 0) { s += 2; return M_PI; }
+    if (strncmp(s, "Ans", 3) == 0) { s += 3; return ans; }
+    if (*s == 'e') { s += 1; return M_E; }
+    if (isdigit((unsigned char)*s) || *s == '.') {
+      char *end;
+      double v = strtod(s, &end);
+      s = end;
+      if (*s == '!') { s++; return calcFact(v); }
+      return v;
+    }
+    err = true;
+    return 0;
+  }
+};
+
+static String calcEvaluate(String expr, bool deg, double ans) {
+  CalcEval ev = { expr.c_str(), deg, false, ans };
+  double v = ev.parse();
+  if (ev.err || isnan(v)) return "";
+  String r;
+  if (fabs(v) >= 1e12 || (fabs(v) < 1e-9 && v != 0)) r = String(v, 6);
+  else {
+    char buf[24];
+    dtostrf(v, 0, 8, buf);
+    for (int i = strlen(buf) - 1; i >= 0 && buf[i] == '0'; i--) buf[i] = 0;
+    int L = strlen(buf);
+    if (L > 0 && buf[L - 1] == '.') buf[L - 1] = 0;
+    r = buf;
+  }
+  return r;
+}
+
 void calcApp() {
-  String expr;
+  String expr, lastAns = "0";
+  double mem = 0;
+  bool deg = true, page = false, err = false;
+  int sel = 0;
   bool needsRedraw = true;
+
+  // layout
+  const int COLS = 5, ROWS = 6;
+  const int BW = 62, BH = 26, GX = 2, GY = 2;
+  const int BY = 78;
+
   while (true) {
+    const CalcBtn (*grid)[5] = page ? calcSci : calcBasic;
     if (needsRedraw) {
       needsRedraw = false;
       gfx->fillScreen(BLACK);
-      gfx->setTextSize(2);
-      gfx->setTextColor(TERM_GREEN, BLACK);
-      gfx->setCursor(8, 8);
-      gfx->print("Calc");
-      // expression area
-      gfx->setTextSize(2);
-      gfx->setTextColor(TERM_BRIGHT, BLACK);
-      gfx->setCursor(8, 40);
-      gfx->print(expr.length() ? expr : "_");
-      // hint
+      // header
       gfx->setTextSize(1);
       gfx->setTextColor(TERM_DIM, BLACK);
-      gfx->setCursor(4, SCREEN_H - 20);
-      gfx->print("digits +-*/(). Enter=eval  c=clear  Long=back");
-      gfx->setCursor(4, SCREEN_H - 10);
-      gfx->print("Expr: 0-9 . + - * / ( )");
+      gfx->setCursor(4, 4);
+      gfx->printf("%s  %s", page ? "SCI" : "BASIC", deg ? "DEG" : "RAD");
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(SCREEN_W - 4 - 6 * 10, 4);
+      gfx->printf("M=%.4s", lastAns.c_str());
+      // display box
+      gfx->drawRect(2, 16, SCREEN_W - 4, 56, TERM_DIM);
+      gfx->setTextSize(1);
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(8, 22);
+      gfx->print(expr.length() > 46 ? expr.substring(expr.length() - 46).c_str() : expr.c_str());
+      gfx->setTextSize(2);
+      gfx->setTextColor(err ? TERM_RED : TERM_BRIGHT, BLACK);
+      String shown = err ? "error" : lastAns;
+      int sw = shown.length() * 12;
+      gfx->setCursor(SCREEN_W - 8 - sw, 52);
+      gfx->print(shown);
+      // buttons
+      for (int r = 0; r < ROWS; r++) {
+        for (int c = 0; c < COLS; c++) {
+          int x = 2 + c * (BW + GX), y = BY + r * (BH + GY);
+          const CalcBtn &b = grid[r][c];
+          bool accent = (b.code == '=') || (b.code == 'C');
+          if (sel == r * COLS + c) {
+            gfx->fillRoundRect(x, y, BW, BH, 3, TERM_SEL_BG);
+            gfx->setTextColor(BLACK, TERM_SEL_BG);
+          } else {
+            gfx->drawRoundRect(x, y, BW, BH, 3, accent ? TERM_ACCENT : TERM_DIM);
+            gfx->fillRoundRect(x + 1, y + 1, BW - 2, BH - 2, 3, BLACK);
+            gfx->setTextColor(accent ? TERM_ACCENT : TERM_BRIGHT, BLACK);
+          }
+          gfx->setTextSize(1);
+          int tw = strlen(b.lbl) * 6;
+          gfx->setCursor(x + (BW - tw) / 2, y + (BH - 8) / 2);
+          gfx->print(b.lbl);
+        }
+      }
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(4, SCREEN_H - 8);
+      gfx->print("trackball+click or type  Long=back");
     }
     InputEventP e;
-    if (!pdaGetInput(e, 50)) continue;
-    if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK || e.ev == PDA_EV_LEFT) return;
-    if (e.ev == PDA_EV_CHAR) {
-      char c = e.ch;
-      if ((c >= '0' && c <= '9') || c == '.' || c == '+' || c == '-' ||
-          c == '*' || c == '/' || c == '(' || c == ')') {
-        if (expr.length() < 28) { expr += c; needsRedraw = true; }
-      } else if (c == 'c' || c == 'C') {
-        expr = ""; needsRedraw = true;
-      }
-    } else if (e.ev == PDA_EV_DELETE) {
-      if (expr.length() > 0) { expr.remove(expr.length() - 1); needsRedraw = true; }
-    } else if (e.ev == PDA_EV_NEWLINE || e.ev == PDA_EV_SELECT) {
-      // --- tiny recursive-descent parser ---
-      const char *p = expr.c_str();
-      double result = 0;
-      bool ok = expr.length() > 0;
-      auto skip = [&]() { while (*p == ' ') p++; };
-      // captured lambdas for recursion
-      struct Parser {
-        const char *p;
-        bool ok;
-        double parseExpr() { // + -
-          double v = parseTerm();
-          while (ok) {
-            while (*p == ' ') p++;
-            if (*p == '+') { p++; v += parseTerm(); }
-            else if (*p == '-') { p++; v -= parseTerm(); }
-            else return v;
-          }
-          return v;
-        }
-        double parseTerm() { // * /
-          double v = parseFactor();
-          while (ok) {
-            while (*p == ' ') p++;
-            if (*p == '*') { p++; v *= parseFactor(); }
-            else if (*p == '/') { p++; double d = parseFactor(); if (d == 0) ok = false; else v /= d; }
-            else return v;
-          }
-          return v;
-        }
-        double parseFactor() { // number or (expr), unary minus
-          while (*p == ' ') p++;
-          if (*p == '-') { p++; return -parseFactor(); }
-          if (*p == '+') { p++; return parseFactor(); }
-          if (*p == '(') {
-            p++;
-            double v = parseExpr();
-            if (*p == ')') { p++; return v; }
-            ok = false; return 0;
-          }
-          char *end = nullptr;
-          double v = strtod(p, &end);
-          if (end == p) { ok = false; return 0; }
-          p = end;
-          return v;
-        }
-      } parser{p, ok};
-      result = parser.parseExpr();
-      while (*parser.p == ' ') parser.p++;
-      if (*parser.p != 0) parser.ok = false;
-      ok = parser.ok;
-      // show result
-      gfx->fillRect(0, 100, SCREEN_W, 40, BLACK);
-      gfx->setTextSize(3);
-      if (ok) {
-        gfx->setTextColor(TERM_GREEN, BLACK);
-        gfx->setCursor(8, 110);
-        if (fabs(result) < 1e12) gfx->print(result, 6);
-        else gfx->print("overflow");
-      } else {
-        gfx->setTextColor(TERM_RED, BLACK);
-        gfx->setCursor(8, 110);
-        gfx->print("syntax error");
-      }
+    if (!pdaGetInput(e, 30)) continue;
+
+    const CalcBtn &b = grid[sel / COLS][sel % COLS];
+    char code = 0;
+    if (e.ev == PDA_EV_UP) { sel = (sel + 30 - COLS) % 30; needsRedraw = true; continue; }
+    else if (e.ev == PDA_EV_DOWN) { sel = (sel + COLS) % 30; needsRedraw = true; continue; }
+    else if (e.ev == PDA_EV_LEFT) { sel = (sel + 29) % 30; needsRedraw = true; continue; }
+    else if (e.ev == PDA_EV_RIGHT) { sel = (sel + 1) % 30; needsRedraw = true; continue; }
+    else if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) code = b.code;
+    else if (e.ev == PDA_EV_DELETE) code = '<';
+    else if (e.ev == PDA_EV_CHAR) {
+      char ch = e.ch;
+      if (isdigit(ch)) code = ch;
+      else if (strchr("+-*/().%^!", ch)) code = ch;
+      else if (ch == '=') code = '=';
+      else continue;
     }
+    else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) return;
+    else continue;
+
+    err = false;
+    switch (code) {
+      case 'C': expr = ""; lastAns = "0"; break;
+      case '<': if (expr.length()) expr.remove(expr.length() - 1); break;
+      case '=': {
+        if (expr.length()) {
+          String r = calcEvaluate(expr, deg, lastAns.toDouble());
+          if (r.length()) { lastAns = r; expr = ""; }
+          else err = true;
+        }
+        break;
+      }
+      case 'T': page = !page; sel = 0; break;
+      case 'D': deg = !deg; break;
+      case 'M': {
+        String r = expr.length() ? calcEvaluate(expr, deg, lastAns.toDouble()) : lastAns;
+        if (r.length()) { mem += r.toDouble(); lastAns = r; expr = ""; }
+        else err = true;
+        break;
+      }
+      case 'U': mem = 0; break;
+      case 'R': {
+        char buf[24];
+        dtostrf(mem, 1, 6, buf);
+        expr += buf;
+        break;
+      }
+      case 'A': expr += "Ans"; break;
+      case 'p': expr += "pi"; break;
+      case 'e': expr += "e"; break;
+      case 's': expr += "sin("; break;
+      case 'c': expr += "cos("; break;
+      case 't': expr += "tan("; break;
+      case 'S': expr += "asin("; break;
+      case 'O': expr += "acos("; break;
+      case 'Y': expr += "atan("; break;
+      case 'n': expr += "ln("; break;
+      case 'g': expr += "log("; break;
+      case 'q': expr += "sqrt("; break;
+      case 'b': expr += "cbrt("; break;
+      case 'P': expr += "^"; break;
+      case 'I': expr = "1/(" + expr + ")"; break;
+      case 'Q': expr += "^2"; break;
+      case 'x': expr += "abs("; break;
+      case 'E': expr += "exp("; break;
+      default:
+        if (code) { char cc[2] = {code, 0}; expr += cc; }
+        break;
+    }
+    if (expr.length() > 200) expr = "";
+    needsRedraw = true;
   }
 }
 

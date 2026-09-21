@@ -6,6 +6,7 @@
 #include "pda.h"
 #include "theme.h"
 #include "games.h"
+#include "gamestats.h"
 
 extern Arduino_GFX *gfx;
 
@@ -250,8 +251,8 @@ void chessApp() {
             if (p == 'P' && g.selY == 0) setPiece(g, g.selX, g.selY, 'Q');
             g.pieceSelected = false;
             // terminal check
-            if (target == 'k') { g.gameOver = true; g.msg = "You win! n=new"; }
-            else if (!kingAlive(g, false)) { g.gameOver = true; g.msg = "You win! n=new"; }
+            if (target == 'k') { g.gameOver = true; g.msg = "You win! n=new"; gsRecordResult(GS_CHESS, true); }
+            else if (!kingAlive(g, false)) { g.gameOver = true; g.msg = "You win! n=new"; gsRecordResult(GS_CHESS, true); }
             else {
               g.whiteToMove = false;
               needsRedraw = true;
@@ -259,7 +260,7 @@ void chessApp() {
               vTaskDelay(pdMS_TO_TICKS(200));
               chessAiMove(g);
               g.whiteToMove = true;
-              if (!kingAlive(g, true)) { g.gameOver = true; g.msg = "AI wins. n=new"; }
+              if (!kingAlive(g, true)) { g.gameOver = true; g.msg = "AI wins. n=new"; gsRecordResult(GS_CHESS, false); }
             }
           } else {
             g.pieceSelected = false;
@@ -647,7 +648,10 @@ void solitaireApp() {
             // win check
             if (g.found[0] && g.found[1] && g.found[2] && g.found[3] &&
                 cardRank(g.found[0])==13 && cardRank(g.found[1])==13 &&
-                cardRank(g.found[2])==13 && cardRank(g.found[3])==13) g.won = true;
+                cardRank(g.found[2])==13 && cardRank(g.found[3])==13) {
+              g.won = true;
+              gsRecordResult(GS_SOLITAIRE, true);
+            }
           }
           needsRedraw = true;
         } else {  // tableau column
@@ -857,13 +861,13 @@ void checkersApp() {
             if (isJump) ckSet(g, g.pselX + (g.selX - g.pselX) / 2, g.pselY + (g.selY - g.pselY) / 2, 0);
             if (g.selY == 0) ckSet(g, g.selX, g.selY, 2);  // promote red
             g.selected = false;
-            if (!ckHasMoves(g, false)) { g.gameOver = true; g.msg = "You win! n=new"; }
+            if (!ckHasMoves(g, false)) { g.gameOver = true; g.msg = "You win! n=new"; gsRecordResult(GS_CHECKERS, true); }
             else {
               g.turn = 2; needsRedraw = true;
               vTaskDelay(pdMS_TO_TICKS(300));
               ckAiMove(g);
               g.turn = 1;
-              if (!ckHasMoves(g, true)) { g.gameOver = true; g.msg = "AI wins. n=new"; }
+              if (!ckHasMoves(g, true)) { g.gameOver = true; g.msg = "AI wins. n=new"; gsRecordResult(GS_CHECKERS, false); }
             }
           } else g.selected = false;
         }
@@ -877,5 +881,195 @@ void checkersApp() {
       case PDA_EV_BACK: return;
       default: break;
     }
+  }
+}
+
+// ============================ Snake ============================
+// Trackball steers; click starts/pauses; n = new game.
+struct Snake {
+  int8_t x[80], y[80];
+  int len;
+  int8_t dirX, dirY;       // current direction
+  int8_t wantX, wantY;     // buffered next direction
+  int8_t foodX, foodY;
+  bool dead, paused, started;
+  int score, hi;
+};
+
+static void snakeReset(Snake &s) {
+  if (s.dead && s.score > 0) gsRecordScore(GS_SNAKE, s.score);
+  s.len = 3;
+  for (int i = 0; i < 3; i++) { s.x[i] = 8 - i; s.y[i] = 8; }
+  s.dirX = 1; s.dirY = 0;
+  s.wantX = 1; s.wantY = 0;
+  s.foodX = 12; s.foodY = 8;
+  s.dead = false; s.paused = false; s.started = false;
+  s.score = 0;
+}
+
+#define SNK_CELL 10
+#define SNK_COLS 28
+#define SNK_ROWS 17
+#define SNK_OX ((SCREEN_W - SNK_COLS * SNK_CELL) / 2)
+#define SNK_OY 40
+
+static void snakeDraw(Snake &s, bool full) {
+  if (full) {
+    gfx->fillScreen(BLACK);
+    gfx->setTextSize(2);
+    gfx->setTextColor(TERM_GREEN, BLACK);
+    gfx->setCursor(8, 6);
+    gfx->print("Snake");
+    gfx->setTextSize(1);
+    gfx->setTextColor(TERM_DIM, BLACK);
+    gfx->setCursor(4, SCREEN_H - 10);
+    gfx->print("Trackball=steer click=pause n=new Long=back");
+    gfx->drawRect(SNK_OX - 2, SNK_OY - 2,
+                  SNK_COLS * SNK_CELL + 4, SNK_ROWS * SNK_CELL + 4, TERM_DIM);
+  }
+  gfx->setTextSize(1);
+  // score line
+  gfx->setTextColor(TERM_BRIGHT, BLACK);
+  gfx->fillRect(220, 6, 96, 16, BLACK);
+  gfx->setCursor(224, 10);
+  gfx->printf("Score %d  Hi %d", s.score, gsGetSnakeHi());
+  // erase head cell before moving (we draw tail cells as we go)
+  for (int i = 0; i < s.len; i++) {
+    int px = SNK_OX + s.x[i] * SNK_CELL, py = SNK_OY + s.y[i] * SNK_CELL;
+    gfx->fillRect(px + 1, py + 1, SNK_CELL - 2, SNK_CELL - 2,
+                  i == 0 ? TERM_BRIGHT : TERM_GREEN);
+  }
+  // food
+  int fx = SNK_OX + s.foodX * SNK_CELL, fy = SNK_OY + s.foodY * SNK_CELL;
+  gfx->fillCircle(fx + SNK_CELL / 2, fy + SNK_CELL / 2, SNK_CELL / 2 - 1,
+                  TERM_ACCENT);
+  if (s.dead) {
+    gfx->setTextSize(2);
+    gfx->setTextColor(TERM_RED, BLACK);
+    gfx->setCursor(SNK_OX + 40, SNK_OY + 60);
+    gfx->print("DEAD!");
+    gfx->setTextSize(1);
+    gfx->setTextColor(TERM_BRIGHT, BLACK);
+    gfx->setCursor(SNK_OX + 34, SNK_OY + 86);
+    gfx->print("click or n = play again");
+  }
+  if (s.paused && !s.dead) {
+    gfx->setTextSize(2);
+    gfx->setTextColor(TERM_ACCENT, BLACK);
+    gfx->setCursor(SNK_OX + 70, SNK_OY + 60);
+    gfx->print("PAUSED");
+  }
+}
+
+static bool snakeStep(Snake &s) {
+  // apply buffered direction if it isn't a reversal
+  if (!(s.wantX == -s.dirX && s.wantY == -s.dirY)) {
+    s.dirX = s.wantX; s.dirY = s.wantY;
+  }
+  int8_t nx = s.x[0] + s.dirX, ny = s.y[0] + s.dirY;
+  if (nx < 0 || nx >= SNK_COLS || ny < 0 || ny >= SNK_ROWS) { s.dead = true; return false; }
+  for (int i = 0; i < s.len; i++)
+    if (s.x[i] == nx && s.y[i] == ny) { s.dead = true; return false; }
+  bool grow = (nx == s.foodX && ny == s.foodY);
+  if (grow) {
+    s.score += 10;
+    if (s.len < 80) s.len++;
+    // new food spot not on snake
+    while (true) {
+      s.foodX = random(SNK_COLS); s.foodY = random(SNK_ROWS);
+      bool onSnake = false;
+      for (int i = 0; i < s.len; i++)
+        if (s.x[i] == s.foodX && s.y[i] == s.foodY) { onSnake = true; break; }
+      if (!onSnake) break;
+    }
+  }
+  // move body: erase old tail first, then shift from tail
+  if (!grow) {
+    int px = SNK_OX + s.x[s.len - 1] * SNK_CELL, py = SNK_OY + s.y[s.len - 1] * SNK_CELL;
+    gfx->fillRect(px + 1, py + 1, SNK_CELL - 2, SNK_CELL - 2, BLACK);
+  }
+  for (int i = s.len - 1; i > 0; i--) { s.x[i] = s.x[i - 1]; s.y[i] = s.y[i - 1]; }
+  s.x[0] = nx; s.y[0] = ny;
+  return true;
+}
+
+void snakeApp() {
+  Snake s;
+  snakeReset(s);
+  bool needsRedraw = true;
+  unsigned long lastStep = 0;
+  int stepMs = 220;
+  while (true) {
+    if (needsRedraw) { snakeDraw(s, true); needsRedraw = false; }
+    InputEventP e;
+    bool got = pdaGetInput(e, 30);
+    if (got) {
+      if (e.ev == PDA_EV_UP)    { s.wantY = -1; s.wantX = 0; s.started = true; }
+      else if (e.ev == PDA_EV_DOWN)  { s.wantY = 1; s.wantX = 0; s.started = true; }
+      else if (e.ev == PDA_EV_LEFT)  { s.wantX = -1; s.wantY = 0; s.started = true; }
+      else if (e.ev == PDA_EV_RIGHT) { s.wantX = 1; s.wantY = 0; s.started = true; }
+      else if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) {
+        if (s.dead) { snakeReset(s); needsRedraw = true; }
+        else s.paused = !s.paused;
+      }
+      else if (e.ev == PDA_EV_CHAR && (e.ch == 'n' || e.ch == 'N')) {
+        snakeReset(s); needsRedraw = true;
+      }
+      else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) return;
+    }
+    if (!s.started || s.paused || s.dead) continue;
+    if (millis() - lastStep >= (unsigned)stepMs) {
+      lastStep = millis();
+      // eat the direction buffer: keep latest wanted direction
+      snakeStep(s);
+      snakeDraw(s, false);
+    }
+  }
+}
+
+// ============================ Games hub ============================
+static const char *const gameNames[] = {
+  "Chess", "Go", "Solitaire", "Checkers", "Snake", "Stats"
+};
+static void (*const gameRun[])(void) = {
+  chessApp, goApp, solitaireApp, checkersApp, snakeApp, gsStatsScreen
+};
+#define N_GAMES (int)(sizeof(gameNames)/sizeof(gameNames[0]))
+
+void gamesApp() {
+  int sel = 0;
+  bool needsRedraw = true;
+  while (true) {
+    if (needsRedraw) {
+      needsRedraw = false;
+      gfx->fillScreen(BLACK);
+      gfx->setTextSize(2);
+      gfx->setTextColor(TERM_GREEN, BLACK);
+      gfx->setCursor(8, 6);
+      gfx->print("Games");
+      gfx->setTextSize(1);
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(4, SCREEN_H - 10);
+      gfx->print("u/d=pick click=play Long=back");
+      for (int i = 0; i < N_GAMES; i++) {
+        int y = 36 + i * 22;
+        if (i == sel) {
+          gfx->fillRect(0, y - 2, SCREEN_W, 20, TERM_SEL_BG);
+          gfx->setTextColor(BLACK, TERM_SEL_BG);
+        } else gfx->setTextColor(TERM_BRIGHT, BLACK);
+        gfx->setTextSize(1);
+        gfx->setCursor(10, y);
+        gfx->print(gameNames[i]);
+      }
+    }
+    InputEventP e;
+    if (!pdaGetInput(e, 50)) continue;
+    if (e.ev == PDA_EV_UP && sel > 0) { sel--; needsRedraw = true; }
+    else if (e.ev == PDA_EV_DOWN && sel < N_GAMES - 1) { sel++; needsRedraw = true; }
+    else if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) {
+      gameRun[sel]();
+      needsRedraw = true;
+    }
+    else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) return;
   }
 }

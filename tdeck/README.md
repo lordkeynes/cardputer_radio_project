@@ -3,7 +3,8 @@
 Offline-first PDA firmware for the **LilyGO T-Deck Plus** (ESP32-S3, 2.8" ST7789
 320x240, ES7210 mic, BBQ10-style I2C keyboard, trackball, microSD, L76K GPS).
 
-Twenty apps in a terminal-green-on-black icon launcher: notes, to-do, audio
+A full app suite in a category-based icon launcher (Work / Tools / Media /
+Network / Games / System) with switchable terminal phosphor themes: notes, to-do, audio
 recording/playback, offline OSM map, clock/stopwatch/timer, calendar, WiFi,
 battery, calculator, search, contacts, unit converter, file manager, ebook
 reader, image viewer, wardrive logger, chess, Go, solitaire, and checkers.
@@ -25,9 +26,10 @@ pio device monitor     # 115200 serial console
 
 ## Launcher
 
-The main menu is a 4-column icon grid. Trackball moves the selection
-(up/down/left/right), click or Enter launches the highlighted app, long-press
-BOOT exits an app back to the launcher.
+The home screen shows six categories: **Work, Tools, Media, Network, Games,
+System**. Trackball moves the selection, click opens a category grid of app
+icons, click again launches. Long-press BOOT always backs out one level.
+The keyboard backlight turns on at boot and follows screen sleep.
 
 ## Apps
 
@@ -38,9 +40,11 @@ saves, long-press exits without saving.
 
 ### To-do
 Checklist stored at `/todo/todo.txt` on the SD card. Up/down picks a task,
-click/Enter toggles done, **n** adds a task, **d** deletes, **t** tags a task
-with today's date (`@YYYY-MM-DD`). Dated tasks also appear on the calendar day
-they are due (yellow dots in the month grid) and in a task list under it.
+click/Enter toggles done, **n** adds a task, **d** deletes. Press **t** on a
+task to open the due-date picker: quick presets (Today, Tomorrow, In 3 days,
+Next week, In 2 weeks, In a month), a full month calendar picker, or Clear.
+Dated tasks also appear on the calendar day they are due (yellow dots in the
+month grid) and in a task list under it.
 
 ### Clock, stopwatch & timer
 Clock shows time from GPS once a fix is acquired (the T-Deck has no RTC
@@ -149,6 +153,33 @@ network coverage — no attack tooling.
   draws from the stock.
 - **Checkers** — against a jump-preferring AI. Click picks and moves men;
   jumps are enforced.
+- **Snake** — trackball steers, click pauses, **n** restarts.
+- **Stats** — wins/losses per game and the Snake high score, persisted to
+  `/games/stats.txt`; **r** resets.
+
+### Sports
+
+Live and past scores from ESPN's public site API (no API key, WiFi required).
+Fifteen leagues: NFL, NCAAF, NBA, WNBA, NCAAM, MLB, NHL, EPL, LaLiga, Serie A,
+Bundesliga, Ligue 1, MLS, Champions League, MMA. Pick a league for the daily
+scoreboard; **left/right** steps day by day (past results included), click
+opens the game detail: per-quarter/period line scores plus a box-score table
+(team statistics). Long-click backs out to the league picker.
+
+### Terminal
+
+An on-device shell. Type commands, Enter runs:
+`ls [dir]`, `cat <file>`, `rm <file>`, `df` (card + free heap/PSRAM), `batt`,
+`gps` (fix/sats), `ip`, `scan` (WiFi), `date`, `beep`, `clear`, `help`.
+Long-click exits.
+
+### Settings
+
+Theme picker (Phosphor, Amber, Ice, Crimson, Mono) with live preview —
+applied immediately and saved to `/config/theme.txt`. Screen-sleep timeout
+(Never/15 s/30 s/45 s/1 min/2 min/5 min), saved to `/config/sleep.txt`.
+The theme also restyles every app; the keyboard backlight follows the
+screen-sleep setting automatically.
 
 ## Layout
 
@@ -157,20 +188,28 @@ tdeck/
 ├── boards/T-Deck.json     vendored board definition
 ├── include/
 │   ├── apps.h             calculator/search/contacts/convert/files protos
-│   ├── games.h            chess/go/solitaire/checkers protos
+│   ├── gamestats.h        game win/loss + high-score APIs
+│   ├── games.h            chess/go/solitaire/checkers/snake/hub protos
 │   ├── media.h            ebook/image/wardrive protos
 │   ├── mapapp.h           slippy-tile math + tile renderer API
 │   ├── pda.h              shared event codes, battery/clock/todo APIs
-│   ├── theme.h            terminal green-on-black color constants
+│   ├── settings.h         settings app protos
+│   ├── terminal.h         terminal app protos
+│   ├── theme.h            runtime-switchable theme API
 │   └── utilities.h        T-Deck pin map
 ├── lib/es7210/            vendored ES7210 mic codec driver
 ├── src/
-│   ├── main.cpp           shell: input, launcher, notes, recorder, map
-│   ├── apps.cpp           calculator, search, contacts, converter, files
-│   ├── games.cpp          chess, Go, solitaire, checkers
+│   ├── main.cpp           shell: input, category launcher, notes, recorder, map
+│   ├── apps.cpp           scientific calculator, search, contacts, converter, files
+│   ├── gamestats.cpp      game win/loss + high-score persistence
+│   ├── games.cpp          chess, Go, solitaire, checkers, Snake, games hub
 │   ├── media.cpp          ebook reader, image viewer, wardrive logger
-│   ├── pda.cpp            battery, clock/stopwatch/timer, calendar, to-do
-│   ├── wifiapp.cpp        WiFi scan/join, promptText, auto-connect
+│   ├── pda.cpp            battery, clock/stopwatch/timer, calendar, to-do, sleep
+│   ├── settings.cpp       theme picker, sleep timeout
+│   ├── sports.cpp         ESPN scores: league picker, scoreboard, box score
+│   ├── terminal.cpp       on-device shell
+│   ├── theme.cpp          runtime themes
+│   ├── wifiapp.cpp        WiFi scan/join, bands view, auto-connect
 │   └── mapapp.cpp         tile math + SD tile rendering
 └── tools/
     ├── download_tiles.py  OSM tile downloader / RGB565 converter

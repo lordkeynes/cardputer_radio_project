@@ -37,6 +37,9 @@ bool pdaScreenTick();
 bool pdaScreenAwake();
 void pdaWake();
 
+// Keyboard backlight (implemented in main.cpp; safe to call from anywhere)
+void kbSetBacklight(uint8_t duty);
+
 // Time
 void pdaApplyGpsTime(int y, int m, int d, int hh, int mm, int ss);
 bool pdaTimeSynced();

@@ -246,3 +246,95 @@ void wifiApp() {
     }
   }
 }
+
+// ============================ WiFi bands (graphical) ============================
+// Channel spectrum view: 2.4 GHz channels 1-14 on the x axis, signal
+// strength on y. Each AP is a rounded bump; overlapping nets form ridges.
+void wifiBandsApp() {
+  int n = WiFi.scanNetworks();
+  const int N_CH = 14;
+  int strongest[N_CH];
+  for (int i = 0; i < N_CH; i++) strongest[i] = -100;
+  int nSec = 0, nOpen = 0;
+  if (n > 0) {
+    for (int i = 0; i < n; i++) {
+      int ch = WiFi.channel(i);
+      if (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) nOpen++;
+      else nSec++;
+      int rssi = WiFi.RSSI(i);
+      int idx = ch - 1;
+      if (idx >= 0 && idx < N_CH && rssi > strongest[idx]) strongest[idx] = rssi;
+    }
+  }
+
+  gfx->fillScreen(BLACK);
+  gfx->setTextSize(2);
+  gfx->setTextColor(TERM_GREEN, BLACK);
+  gfx->setCursor(8, 6);
+  gfx->print("WiFi bands");
+  gfx->setTextSize(1);
+  gfx->setTextColor(TERM_DIM, BLACK);
+  gfx->setCursor(230, 10);
+  gfx->printf("%d nets", n > 0 ? n : 0);
+
+  // plot area
+  const int PX = 12, PY = 34, PW = 296, PH = 130;
+  gfx->drawRect(PX, PY, PW, PH, TERM_DIM);
+
+  // y grid: -30 to -100 dBm
+  for (int db = -40; db >= -100; db -= 20) {
+    int y = PY + PH - (int)((float)(db + 100) / 70.0 * PH);
+    if (y <= PY + PH && y > PY) {
+      gfx->drawFastHLine(PX + 1, y, PW - 2, RGB565(30, 60, 40));
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(PX - 2, y - 4);
+      gfx->printf("%d", db);
+    }
+  }
+
+  // per-channel bars with signal color
+  int colW = PW / N_CH;
+  for (int ch = 0; ch < N_CH; ch++) {
+    int cx = PX + ch * colW;
+    int s = strongest[ch];
+    if (s <= -100) continue;
+    int h = (int)((float)(s + 100) / 70.0 * PH);
+    if (h <= 0) continue;
+    uint16_t col = (s > -60) ? TERM_ACCENT : (s > -75) ? TERM_GREEN : TERM_DIM;
+    // draw a gaussian-ish bump centered in the channel cell
+    for (int dy = 0; dy < h; dy++) {
+      int y = PY + PH - 1 - dy;
+      float frac = 1.0f - (float)dy / h;
+      int half = (int)(colW * 0.6f * frac);
+      if (half > 0)
+        gfx->drawFastHLine(cx + colW / 2 - half, y, half * 2, col);
+    }
+    gfx->setTextColor(TERM_BRIGHT, BLACK);
+    gfx->setCursor(cx + colW / 2 - 3, PY + PH + 4);
+    gfx->printf("%d", ch + 1);
+  }
+  // channel number for empty channels too
+  for (int ch = 0; ch < N_CH; ch++) {
+    if (strongest[ch] <= -100) {
+      int cx = PX + ch * colW;
+      gfx->setTextColor(RGB565(40, 40, 40), BLACK);
+      gfx->setCursor(cx + colW / 2 - 3, PY + PH + 4);
+      gfx->printf("%d", ch + 1);
+    }
+  }
+
+  // legend
+  gfx->setTextColor(TERM_DIM, BLACK);
+  gfx->setCursor(12, PY + PH + 20);
+  gfx->printf("2.4 GHz  %d secured, %d open", nSec, nOpen);
+  gfx->setTextColor(TERM_DIM, BLACK);
+  gfx->setCursor(4, SCREEN_H - 10);
+  gfx->print("click = rescan   Long = back");
+
+  while (true) {
+    InputEventP e;
+    if (!pdaGetInput(e, 50)) continue;
+    if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) { wifiBandsApp(); return; }
+    if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) { WiFi.scanDelete(); return; }
+  }
+}

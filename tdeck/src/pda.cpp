@@ -10,6 +10,7 @@
 #include "utilities.h"
 #include "pda.h"
 #include "theme.h"
+#include "settings.h"
 
 extern Arduino_GFX *gfx;
 extern QueueHandle_t inputQueue;
@@ -52,10 +53,12 @@ static uint32_t lastActivityMs = 0;
 void pdaNoteActivity() { lastActivityMs = millis(); }
 
 bool pdaScreenTick() {  // call ~1/s; returns true if state changed
-  bool wantAwake = (millis() - lastActivityMs) < SCREEN_SLEEP_MS;
+  unsigned long timeout = settingsSleepMs();
+  bool wantAwake = (timeout == 0) || (millis() - lastActivityMs) < timeout;
   if (wantAwake != screenAwake) {
     screenAwake = wantAwake;
     digitalWrite(BOARD_TFT_BACKLIGHT, screenAwake ? HIGH : LOW);
+    kbSetBacklight(screenAwake ? 128 : 0);   // keyboard backlight follows screen
     return true;
   }
   return false;
@@ -481,6 +484,136 @@ int todoCountForDate(int y, int m, int d) {
   return c;
 }
 
+// ---------- To-do due-date picker ----------
+static bool todoPickDateGrid(int &y0, int &m0, int &d0) {
+  int y = y0, m = m0, d = d0;
+  time_t now = time(NULL);
+  struct tm lt;
+  localtime_r(&now, &lt);
+  if (y == 0) { y = lt.tm_year + 1900; m = lt.tm_mon + 1; d = lt.tm_mday; }
+  const char *mon[12] = {"Jan","Feb","Mar","Apr","May","Jun",
+                         "Jul","Aug","Sep","Oct","Nov","Dec"};
+  auto dimOf = [](int yy, int mm) {
+    if (mm == 2) return (yy % 4 == 0 && (yy % 100 != 0 || yy % 400 == 0)) ? 29 : 28;
+    return (mm == 4 || mm == 6 || mm == 9 || mm == 11) ? 30 : 31;
+  };
+  bool needsRedraw = true;
+  while (true) {
+    if (needsRedraw) {
+      needsRedraw = false;
+      gfx->fillScreen(BLACK);
+      gfx->setTextSize(2);
+      gfx->setTextColor(TERM_GREEN, BLACK);
+      gfx->setCursor(8, 6);
+      gfx->printf("Pick date  %s %d", mon[m - 1], y);
+      gfx->setTextSize(1);
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(8, 30);
+      gfx->print("Su Mo Tu We Th Fr Sa");
+      int dim = dimOf(y, m);
+      struct tm first = {};
+      first.tm_year = y - 1900; first.tm_mon = m - 1; first.tm_mday = 1;
+      first.tm_isdst = -1;
+      mktime(&first);
+      int startCol = first.tm_wday;
+      for (int day = 1; day <= dim; day++) {
+        int col = (startCol + day - 1) % 7;
+        int row = (startCol + day - 1) / 7;
+        int x = 8 + col * 24, yy = 44 + row * 20;
+        if (day == d) {
+          gfx->fillRect(x - 2, yy - 2, 22, 16, TERM_SEL_BG);
+          gfx->setTextColor(BLACK, TERM_SEL_BG);
+        } else gfx->setTextColor(TERM_BRIGHT, BLACK);
+        gfx->setCursor(x, yy);
+        gfx->printf("%2d", day);
+      }
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(4, SCREEN_H - 10);
+      gfx->print("Arrows=move +/-=month click=ok Long=cancel");
+    }
+    InputEventP e;
+    if (!pdaGetInput(e, 50)) continue;
+    int dim = dimOf(y, m);
+    if (e.ev == PDA_EV_LEFT)  { if (d > 1) d--; else { m--; if (m < 1) { m = 12; y--; } d = dimOf(y, m); } needsRedraw = true; }
+    else if (e.ev == PDA_EV_RIGHT) { if (d < dim) d++; else { m++; if (m > 12) { m = 1; y++; } d = 1; } needsRedraw = true; }
+    else if (e.ev == PDA_EV_UP)    { if (d > 7) d -= 7; else d = 1; needsRedraw = true; }
+    else if (e.ev == PDA_EV_DOWN)  { d += 7; if (d > dim) d = dim; needsRedraw = true; }
+    else if (e.ev == PDA_EV_CHAR && (e.ch == '+' || e.ch == '=')) { m++; if (m > 12) { m = 1; y++; } if (d > dimOf(y, m)) d = dimOf(y, m); needsRedraw = true; }
+    else if (e.ev == PDA_EV_CHAR && e.ch == '-') { m--; if (m < 1) { m = 12; y--; } if (d > dimOf(y, m)) d = dimOf(y, m); needsRedraw = true; }
+    else if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) { y0 = y; m0 = m; d0 = d; return true; }
+    else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) return false;
+  }
+}
+
+static void todoPickDueDate(TodoTask &t) {
+  const char *const opts[] = {
+    "Today", "Tomorrow", "In 3 days", "Next week", "In 2 weeks",
+    "In a month", "Pick date...", "Clear date"
+  };
+  const int NOPTS = 8;
+  time_t now = time(NULL);
+  struct tm lt;
+  localtime_r(&now, &lt);
+  if (lt.tm_year + 1900 < 2020) { lt.tm_year = 100; lt.tm_mon = 0; lt.tm_mday = 1; lt.tm_hour = 12; }
+  int sel = 0;
+  bool needsRedraw = true;
+  while (true) {
+    if (needsRedraw) {
+      needsRedraw = false;
+      gfx->fillScreen(BLACK);
+      gfx->setTextSize(2);
+      gfx->setTextColor(TERM_GREEN, BLACK);
+      gfx->setCursor(8, 6);
+      gfx->print("Due date");
+      gfx->setTextSize(1);
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(8, 28);
+      gfx->print(t.text);
+      for (int i = 0; i < NOPTS; i++) {
+        int y = 46 + i * 20;
+        if (i == sel) {
+          gfx->fillRect(0, y - 2, SCREEN_W, 18, TERM_SEL_BG);
+          gfx->setTextColor(BLACK, TERM_SEL_BG);
+        } else gfx->setTextColor(TERM_BRIGHT, BLACK);
+        gfx->setCursor(10, y);
+        gfx->print(opts[i]);
+      }
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(4, SCREEN_H - 10);
+      gfx->print("u/d=pick click=set Long=cancel");
+    }
+    InputEventP e;
+    if (!pdaGetInput(e, 50)) continue;
+    if (e.ev == PDA_EV_UP && sel > 0) { sel--; needsRedraw = true; }
+    else if (e.ev == PDA_EV_DOWN && sel < NOPTS - 1) { sel++; needsRedraw = true; }
+    else if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) {
+      if (sel == 7) {  // clear date
+        t.dueYear = t.dueMonth = t.dueDay = 0;
+        return;
+      }
+      if (sel == 6) {  // calendar picker
+        int py = t.dueYear, pm = t.dueMonth, pd = t.dueDay;
+        if (py == 0) { py = lt.tm_year + 1900; pm = lt.tm_mon + 1; pd = lt.tm_mday; }
+        if (todoPickDateGrid(py, pm, pd)) {
+          t.dueYear = py; t.dueMonth = pm; t.dueDay = pd;
+        }
+        return;
+      }
+      static const int addDays[6] = {0, 1, 3, 7, 14, 30};
+      struct tm tmp = lt;
+      tmp.tm_mday += addDays[sel];
+      tmp.tm_hour = 12;
+      time_t tt = mktime(&tmp);
+      localtime_r(&tt, &tmp);
+      t.dueYear = tmp.tm_year + 1900;
+      t.dueMonth = tmp.tm_mon + 1;
+      t.dueDay = tmp.tm_mday;
+      return;
+    }
+    else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) return;
+  }
+}
+
 void todoApp() {
   static TodoTask tasks[TODO_MAX_TASKS];
   int nTasks = todoLoadTasks(tasks, TODO_MAX_TASKS);
@@ -498,7 +631,7 @@ void todoApp() {
       gfx->setTextSize(1);
       gfx->setTextColor(TERM_DIM, BLACK);
       gfx->setCursor(4, SCREEN_H - 20);
-      gfx->print("Click=done n=new d=del t=date today Long=back");
+      gfx->print("Click=done n=new d=del t=due date Long=back");
       const int visible = 8;
       int top = 0;
       if (nTasks > visible && sel >= visible) top = sel - visible + 1;
@@ -583,12 +716,7 @@ void todoApp() {
           }
         } else if (e.ch == 't' || e.ch == 'T') {
           if (nTasks > 0) {
-            time_t now = time(NULL);
-            struct tm lt;
-            localtime_r(&now, &lt);
-            tasks[sel].dueYear = lt.tm_year + 1900;
-            tasks[sel].dueMonth = lt.tm_mon + 1;
-            tasks[sel].dueDay = lt.tm_mday;
+            todoPickDueDate(tasks[sel]);
             dirty = true;
             needsRedraw = true;
           }

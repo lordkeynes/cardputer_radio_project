@@ -18,6 +18,9 @@
 #include "apps.h"
 #include "games.h"
 #include "media.h"
+#include "settings.h"
+#include "terminal.h"
+#include "sports.h"
 
 #define SCREEN_W 320
 #define SCREEN_H 240
@@ -50,6 +53,7 @@ static bool getInput(InputEvent &e, unsigned long waitMs);
 
 // Bridge declarations for pda.cpp / wifiapp.cpp
 void wifiApp();
+void wifiBandsApp();
 bool wifiAutoConnect();
 bool wifiConnected();
 
@@ -75,16 +79,41 @@ bool sdOk = false;   // non-static: used by pda.cpp/wifiapp.cpp
 
 // ---------- Input: keyboard (I2C @0x55) + trackball ----------
 #define LILYGO_KB_SLAVE_ADDRESS 0x55
+#define LILYGO_KB_BRIGHTNESS_CMD 0x01
 
 static bool kbAvailable = false;
+
+// Keyboard backlight (keyboard MCU command 0x01, duty 0-255). Runs on the
+// keyboard task's Wire bus to avoid two I2C masters fighting over it.
+static volatile uint8_t kbWantBacklight = 128;
+static volatile bool kbBacklightDirty = false;
+
+void kbSetBacklight(uint8_t duty) {
+  kbWantBacklight = duty;
+  kbBacklightDirty = true;
+}
 
 static void keyboardTask(void *pv) {
   Wire.begin(BOARD_I2C_SDA, BOARD_I2C_SCL);
   delay(300);
   Wire.requestFrom(LILYGO_KB_SLAVE_ADDRESS, 1);
   kbAvailable = (Wire.read() != -1);
+  if (kbAvailable) {
+    // turn the keyboard backlight on at boot
+    Wire.beginTransmission(LILYGO_KB_SLAVE_ADDRESS);
+    Wire.write(LILYGO_KB_BRIGHTNESS_CMD);
+    Wire.write(kbWantBacklight);
+    Wire.endTransmission();
+  }
   if (!kbAvailable) return;
   while (true) {
+    if (kbBacklightDirty) {
+      kbBacklightDirty = false;
+      Wire.beginTransmission(LILYGO_KB_SLAVE_ADDRESS);
+      Wire.write(LILYGO_KB_BRIGHTNESS_CMD);
+      Wire.write(kbWantBacklight);
+      Wire.endTransmission();
+    }
     char keyValue = 0;
     Wire.requestFrom(LILYGO_KB_SLAVE_ADDRESS, 1);
     while (Wire.available() > 0) {
@@ -1204,29 +1233,202 @@ static void (*const launcherRun[])() = {
   chessApp, goApp, solitaireApp, checkersApp,
 };
 static const int LAUNCHER_N = 20;
+
+// ---- Category home screen ----
+// Each category is a list of launcher-app indexes above (plus hubs).
+struct Category {
+  const char *name;
+  const int *apps;     // indexes into launcherLabels/Run, or -1 = hub entry
+  int n;
+};
+
+static const int catProductivity[] = {0, 5, -2};
+static const int catTools[]         = {8, 9, 10, 11, 12};
+static const int catMedia[]         = {13, 14, 1, 2};
+static const int catNetwork[]      = {6, 15, -4, -5};
+static const int catSystem[]        = {7, -1, -3};
+
+static void runSettings() { settingsApp(); }
+static void runTerminal() { terminalApp(); }
+
+static const Category categories[] = {
+  {"Work",     catProductivity, 3},
+  {"Tools",    catTools,        5},
+  {"Media",    catMedia,        4},
+  {"Network",  catNetwork,      4},
+  {"Games",    NULL,            0},   // gamesApp hub
+  {"System",   catSystem,       3},
+};
+#define N_CATS (int)(sizeof(categories)/sizeof(categories[0]))
+
+// Category icons (drawn with primitives, 24x24 at x,y)
+static void drawCategoryIcon(int cat, int x, int y) {
+  uint16_t c = TERM_GREEN, d = TERM_DIM;
+  switch (cat) {
+    case 0:  // Work: clipboard
+      gfx->drawRect(x + 4, y + 3, 16, 18, c);
+      gfx->fillRect(x + 8, y + 1, 8, 4, c);
+      for (int i = 0; i < 3; i++) gfx->drawFastHLine(x + 7, y + 9 + i * 4, 10, d);
+      break;
+    case 1:  // Tools: wrench-ish
+      gfx->drawCircle(x + 8, y + 8, 5, c);
+      gfx->drawLine(x + 12, y + 12, x + 20, y + 20, c);
+      gfx->drawLine(x + 13, y + 11, x + 21, y + 19, c);
+      gfx->drawRect(x + 3, y + 15, 6, 6, d);
+      break;
+    case 2:  // Media: play button in screen
+      gfx->drawRect(x + 2, y + 4, 20, 16, c);
+      gfx->fillTriangle(x + 8, y + 8, x + 8, y + 16, x + 17, y + 12, TERM_BRIGHT);
+      break;
+    case 3:  // Network: globe
+      gfx->drawCircle(x + 12, y + 12, 10, c);
+      gfx->drawCircle(x + 12, y + 12, 5, d);
+      gfx->drawFastVLine(x + 12, y + 2, 20, d);
+      gfx->drawFastHLine(x + 2, y + 12, 20, d);
+      break;
+    case 4:  // Games: dice
+      gfx->drawRect(x + 3, y + 3, 18, 18, c);
+      gfx->fillCircle(x + 8, y + 8, 2, TERM_BRIGHT);
+      gfx->fillCircle(x + 16, y + 16, 2, TERM_BRIGHT);
+      gfx->fillCircle(x + 16, y + 8, 2, d);
+      gfx->fillCircle(x + 8, y + 16, 2, d);
+      break;
+    case 5:  // System: gear
+      gfx->drawCircle(x + 12, y + 12, 6, c);
+      gfx->drawCircle(x + 12, y + 12, 9, d);
+      for (int a = 0; a < 8; a++) {
+        float ang = a * 3.14159f / 4.0f;
+        gfx->drawLine(x + 12 + 10 * cosf(ang), y + 12 + 10 * sinf(ang),
+                      x + 12 + 13 * cosf(ang), y + 12 + 13 * sinf(ang), d);
+      }
+      break;
+    default:
+      gfx->drawRect(x + 6, y + 6, 12, 12, c);
+      break;
+  }
+}
+
 #define LAUNCHER_COLS 4
 #define ICON_BOX 24
 #define CELL_W (SCREEN_W / LAUNCHER_COLS)
-#define CELL_H ((SCREEN_H - 18 - MENU_TOP) / 5)
+#define CELL_H ((SCREEN_H - 18 - MENU_TOP) / 3)
 
-static void drawLauncherCell(int idx, int sel) {
-  int cx = idx % LAUNCHER_COLS, cy = idx / LAUNCHER_COLS;
+// Draw one cell of a grid page; iconIdx indexes launcher icon drawers for
+// apps, or -1/-2/-3 for settings/terminal/games-hub special icons.
+static void drawCategoryCellIcon(int idx, int x, int y) {
+  if (idx >= 0) { drawAppIcon(idx, x, y); return; }
+  uint16_t c = TERM_GREEN, d = TERM_DIM;
+  if (idx == -1) {  // Settings: sliders
+    gfx->drawFastVLine(x + 6, y + 4, 16, c);
+    gfx->drawFastVLine(x + 12, y + 4, 16, c);
+    gfx->drawFastVLine(x + 18, y + 4, 16, c);
+    gfx->fillCircle(x + 6, y + 9, 3, TERM_BRIGHT);
+    gfx->fillCircle(x + 12, y + 14, 3, TERM_BRIGHT);
+    gfx->fillCircle(x + 18, y + 19, 3, TERM_BRIGHT);
+  } else if (idx == -2) {  // To-do hub: check list
+    gfx->drawRect(x + 3, y + 3, 18, 18, c);
+    gfx->drawLine(x + 6, y + 8, x + 9, y + 11, TERM_BRIGHT);
+    gfx->drawLine(x + 9, y + 11, x + 13, y + 6, TERM_BRIGHT);
+    gfx->drawLine(x + 6, y + 14, x + 9, y + 17, d);
+    gfx->drawLine(x + 9, y + 17, x + 13, y + 12, d);
+  } else if (idx == -4) {  // WiFi bands: bars
+    for (int i = 0; i < 4; i++)
+      gfx->drawFastVLine(x + 5 + i * 5, y + 18 - (4 + i * 4), 4 + i * 4,
+                         i == 3 ? TERM_BRIGHT : c);
+  } else if (idx == -5) {  // Sports: scoreboard board
+    gfx->drawRect(x + 2, y + 4, 20, 16, c);
+    gfx->drawFastHLine(x + 5, y + 9, 5, TERM_BRIGHT);
+    gfx->drawFastHLine(x + 5, y + 13, 8, TERM_BRIGHT);
+    gfx->drawFastHLine(x + 5, y + 17, 4, TERM_DIM);
+  } else {  // Terminal: prompt box
+    gfx->drawRect(x + 2, y + 4, 20, 16, c);
+    gfx->setCursor(x + 5, y + 9);
+    gfx->setTextColor(TERM_BRIGHT, BLACK);
+    gfx->setTextSize(1);
+    gfx->print(">");
+    gfx->fillRect(x + 13, y + 16, 6, 2, TERM_BRIGHT);
+  }
+}
+
+static void drawCategoryCell(int cx, int cy, const char *label, int iconIdx,
+                             bool selected) {
   int x = cx * CELL_W, y = MENU_TOP + cy * CELL_H;
-  uint16_t bg = (idx == sel) ? TERM_SEL_BG : BLACK;
+  uint16_t bg = selected ? TERM_SEL_BG : BLACK;
   gfx->fillRect(x, y, CELL_W, CELL_H, bg);
-  drawAppIcon(idx, x + (CELL_W - ICON_BOX) / 2, y + (CELL_H - ICON_BOX - 10) / 2);
+  drawCategoryCellIcon(iconIdx, x + (CELL_W - ICON_BOX) / 2,
+                       y + (CELL_H - ICON_BOX - 10) / 2);
   gfx->setTextSize(1);
-  gfx->setTextColor((idx == sel) ? BLACK : TERM_DIM, bg);
-  const char *lb = launcherLabels[idx];
-  int tw = strlen(lb) * 6;
+  gfx->setTextColor(selected ? BLACK : TERM_DIM, bg);
+  int tw = strlen(label) * 6;
   gfx->setCursor(x + (CELL_W - tw) / 2, y + CELL_H - 12);
-  gfx->print(lb);
+  gfx->print(label);
+}
+
+// Run one app from a category page by its icon idx (>=0 launcher idx,
+// -1 settings, -2 to-do hub, -3 terminal, -4 wifi bands, -5 sports).
+static void runCategoryApp(int idx) {
+  if (idx >= 0) launcherRun[idx]();
+  else if (idx == -1) settingsApp();
+  else if (idx == -2) todoApp();
+  else if (idx == -3) terminalApp();
+  else if (idx == -4) wifiBandsApp();
+  else if (idx == -5) sportsApp();
+}
+
+static const char *categoryAppLabel(int idx) {
+  if (idx >= 0) return launcherLabels[idx];
+  if (idx == -1) return "Setngs";
+  if (idx == -2) return "To-do";
+  if (idx == -3) return "Term";
+  if (idx == -4) return "Bands";
+  if (idx == -5) return "Sports";
+  return "?";
+}
+
+// A generic grid page: sel in [0,n), apps[] gives icon indexes, back returns.
+static void runGridPage(const char *title, const int *apps, int n) {
+  int sel = 0;
+  static uint32_t lastGen = 0;
+  bool full = true;
+  int lastSel = -1;
+  while (true) {
+    bool fullRepaint = (full || uiGen != lastGen);
+    if (fullRepaint) {
+      lastGen = uiGen;
+      full = false;
+      drawTitle(title);
+      gfx->fillRect(0, MENU_TOP - 4, SCREEN_W, SCREEN_H - 18 - (MENU_TOP - 4), BLACK);
+      for (int i = 0; i < n; i++) {
+        drawCategoryCell(i % LAUNCHER_COLS, i / LAUNCHER_COLS,
+                         categoryAppLabel(apps[i]), apps[i], i == sel);
+      }
+      lastSel = sel;
+    } else if (sel != lastSel) {
+      drawCategoryCell(lastSel % LAUNCHER_COLS, lastSel / LAUNCHER_COLS,
+                       categoryAppLabel(apps[lastSel]), apps[lastSel], false);
+      drawCategoryCell(sel % LAUNCHER_COLS, sel / LAUNCHER_COLS,
+                       categoryAppLabel(apps[sel]), apps[sel], true);
+      lastSel = sel;
+    }
+    InputEvent e;
+    if (!getInput(e, 50)) continue;
+    int cols = LAUNCHER_COLS;
+    if (e.ev == EV_UP) sel = (sel + n - cols) % n;
+    else if (e.ev == EV_DOWN) sel = (sel + cols) % n;
+    else if (e.ev == EV_LEFT) sel = (sel + n - 1) % n;
+    else if (e.ev == EV_RIGHT) sel = (sel + 1) % n;
+    else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
+      runCategoryApp(apps[sel]);
+      uiScreenChanged();
+      full = true;
+    } else if (e.ev == EV_LONGSELECT || e.ev == EV_BACK) return;
+  }
 }
 
 static void mainMenu() {
   int sel = 0;
-  static int lastSel = -1;
   static uint32_t lastGen = 0;
+  static int lastSel = -1;
   while (true) {
     // Feed GPS parser while idle so time syncs at boot (first fix of the day).
     gpsPoll();
@@ -1236,28 +1438,38 @@ static void mainMenu() {
                       gps.time.hour(), gps.time.minute(), gps.time.second());
       Serial.println("[gps] time synced at boot");
     }
-    if (uiGen != lastGen || lastSel < 0) {
+    bool fullRepaint = (uiGen != lastGen || lastSel < 0);
+    if (fullRepaint) {
       lastGen = uiGen;
       drawTitle("T-Deck Plus");
       gfx->fillRect(0, MENU_TOP - 4, SCREEN_W, SCREEN_H - 18 - (MENU_TOP - 4), BLACK);
-      for (int i = 0; i < LAUNCHER_N; i++) drawLauncherCell(i, sel);
+      for (int i = 0; i < N_CATS; i++) {
+        const Category &cat = categories[i];
+        drawCategoryCell(i % LAUNCHER_COLS, i / LAUNCHER_COLS,
+                         cat.name, /*dummy*/ 100 + i, i == sel);
+      }
       lastSel = sel;
     } else if (sel != lastSel) {
-      int prev = lastSel;
-      drawLauncherCell(prev, sel);
-      drawLauncherCell(sel, sel);
+      drawCategoryCell(lastSel % LAUNCHER_COLS, lastSel / LAUNCHER_COLS,
+                       categories[lastSel].name, 100 + lastSel, false);
+      drawCategoryCell(sel % LAUNCHER_COLS, sel / LAUNCHER_COLS,
+                       categories[sel].name, 100 + sel, true);
       lastSel = sel;
     }
     InputEvent e;
     if (!getInput(e, 50)) continue;
-    if (e.ev == EV_UP) sel = (sel + LAUNCHER_N - LAUNCHER_COLS) % LAUNCHER_N;
-    else if (e.ev == EV_DOWN) sel = (sel + LAUNCHER_COLS) % LAUNCHER_N;
-    else if (e.ev == EV_LEFT) sel = (sel + LAUNCHER_N - 1) % LAUNCHER_N;
-    else if (e.ev == EV_RIGHT) sel = (sel + 1) % LAUNCHER_N;
+    int n = N_CATS;
+    if (e.ev == EV_UP) sel = (sel + n - LAUNCHER_COLS) % n;
+    else if (e.ev == EV_DOWN) sel = (sel + LAUNCHER_COLS) % n;
+    else if (e.ev == EV_LEFT) sel = (sel + n - 1) % n;
+    else if (e.ev == EV_RIGHT) sel = (sel + 1) % n;
     else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
-      launcherRun[sel]();
+      if (categories[sel].apps == NULL) gamesApp();
+      else {
+        runGridPage(categories[sel].name, categories[sel].apps, categories[sel].n);
+      }
       uiScreenChanged();
-      lastSel = -1;  // force full redraw on return
+      lastSel = -1;
     }
   }
 }
@@ -1281,6 +1493,7 @@ void setup() {
 
   sdOk = sdInit();
   Serial.printf("[boot] SD: %s\n", sdOk ? "OK" : "FAIL");
+  themeInit();   // load saved theme (needs SD mounted)
   if (sdOk) {
     Serial.printf("[boot] SD type: %s, size: %lu MB\n",
                   SD.cardType() == CARD_SDHC ? "SDHC" : SD.cardType() == CARD_SD ? "SDSC" : "?",

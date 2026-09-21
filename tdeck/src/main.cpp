@@ -200,20 +200,44 @@ static void uiInit() {
   gfx->setTextSize(2);
 }
 
+// Status indicators in the title bar, right side: [WiFi] [Batt%]
+static void drawTitleBarIndicators() {
+  gfx->setTextSize(1);
+  int x = SCREEN_W - 4;
+  // Battery percent
+  int pct = batteryPercent();
+  uint16_t battColor = pct > 50 ? RGB565(0, 255, 0) : pct > 20 ? RGB565(255, 255, 0) : RGB565(255, 80, 80);
+  char b[8];
+  snprintf(b, sizeof(b), "%d%%", pct);
+  x -= strlen(b) * 6;
+  gfx->setTextColor(battColor, BLACK);
+  gfx->setCursor(x, 6);
+  gfx->print(b);
+  x -= 10;  // gap
+  // WiFi indicator
+  if (wifiConnected()) {
+    x -= 12;
+    gfx->setTextColor(RGB565(0, 200, 255), BLACK);
+    gfx->setCursor(x, 6);
+    gfx->print("~");
+    gfx->print("~");
+  }
+}
 static void drawTitle(const char *title) {
   gfx->fillScreen(BLACK);
-  gfx->setTextSize(2);
-  gfx->setTextColor(RGB565(0, 120, 255), BLACK);
-  gfx->setCursor(4, 4);
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565(0, 160, 255), BLACK);
+  gfx->setCursor(4, 7);
   gfx->println(title);
-  gfx->drawFastHLine(0, 22, SCREEN_W, RGB565(0, 120, 255));
+  drawTitleBarIndicators();
+  gfx->drawFastHLine(0, 18, SCREEN_W, RGB565(0, 120, 255));
   gfx->setTextColor(WHITE, BLACK);
   gfx->setTextSize(1);
 }
 
 // Scrolling menu list geometry: rows of 30px in the area y=30..SCREEN_H-18.
 #define MENU_ROW_H 30
-#define MENU_TOP 30
+#define MENU_TOP 26
 static int menuVisibleRows() {
   int area = SCREEN_H - 18 - MENU_TOP;
   int rows = area / MENU_ROW_H;
@@ -966,8 +990,7 @@ static void mainMenu() {
   int sel = 0;
   char statusBuf[40];
   while (true) {
-    snprintf(statusBuf, sizeof(statusBuf), "Batt %d%%  %s",
-             batteryPercent(), wifiConnected() ? "WiFi OK" : (sdOk ? "SD OK" : "NO SD"));
+    snprintf(statusBuf, sizeof(statusBuf), "%s", sdOk ? "SD OK" : "NO SD");
     drawMenuList("T-Deck Plus", items, nItems, sel, statusBuf);
     InputEvent e;
     if (!getInput(e, 50)) continue;

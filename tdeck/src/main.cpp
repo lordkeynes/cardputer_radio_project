@@ -166,12 +166,20 @@ static void drawStatus(const char *msg) {
   gfx->setTextColor(WHITE, BLACK);
 }
 
+static uint32_t uiGen = 0;
+
 static void drawMenuList(const char *title, const char *const *items, int n, int sel, const char *status) {
   static int lastSel = -1;
   static const char *lastTitle = NULL;
-  if (title != lastTitle || lastSel < 0) {
+  static const char *const *lastItems = NULL;
+  static int lastN = 0;
+  static uint32_t lastGen = 0;
+  if (uiGen != lastGen || title != lastTitle || lastSel < 0 || items != lastItems || n != lastN) {
+    lastGen = uiGen;
     drawTitle(title);
     lastTitle = title;
+    lastItems = items;
+    lastN = n;
     lastSel = -1;
     for (int i = 0; i < n; i++) {
       int y = itemY(i, n);
@@ -206,6 +214,9 @@ static void drawMenuList(const char *title, const char *const *items, int n, int
   }
   lastSel = sel;
 }
+
+static void uiScreenChanged() { uiGen++; }
+
 
 // ---------- SD ----------
 static bool sdInit() {
@@ -424,6 +435,7 @@ static void notesApp() {
           SD.remove(path);
         }
       }
+      uiScreenChanged();
     }
   }
 }
@@ -654,6 +666,7 @@ static void mainMenu() {
       if (sel == 0) notesApp();
       else if (sel == 1) recorderApp();
       else playbackApp();
+      uiScreenChanged();
     }
   }
 }

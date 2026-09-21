@@ -21,8 +21,8 @@
 #define NOTE_DIR "/notes"
 #define REC_DIR  "/recordings"
 
-#define BOARD_GPS_RX_PIN 43
-#define BOARD_GPS_TX_PIN 44
+#define BOARD_GPS_RX_PIN 44
+#define BOARD_GPS_TX_PIN 43
 #define GPS_BAUD 9600
 #define MAP_TILE_DIR "/map"
 #define TILE_STEP 64
@@ -88,31 +88,39 @@ static void keyboardTask(void *pv) {
 #define TB_PIN_LEFT  BOARD_TBOX_G04
 #define TB_PIN_DOWN  BOARD_TBOX_G03
 
+// The AN48841B optical sensors emit very short active-low pulses; a 10ms polling
+// loop can miss them entirely. Count edges in ISRs, drain the counts in the task.
+static volatile uint32_t tbPulse[4] = {0, 0, 0, 0};
+static void IRAM_ATTR tbIsr0() { tbPulse[0]++; }
+static void IRAM_ATTR tbIsr1() { tbPulse[1]++; }
+static void IRAM_ATTR tbIsr2() { tbPulse[2]++; }
+static void IRAM_ATTR tbIsr3() { tbPulse[3]++; }
+
 static void trackballTask(void *pv) {
   const uint8_t dir_pins[4] = {TB_PIN_RIGHT, TB_PIN_UP, TB_PIN_LEFT, TB_PIN_DOWN};
   const AppEvent dir_ev[4] = {EV_RIGHT, EV_UP, EV_LEFT, EV_DOWN};
   const char *dir_name[4] = {"RIGHT", "UP", "LEFT", "DOWN"};
-  bool last_dir[4] = {false, false, false, false};
+  void (*const isrs[4])() = {tbIsr0, tbIsr1, tbIsr2, tbIsr3};
+  uint32_t lastCount[4] = {0, 0, 0, 0};
   pinMode(BOARD_BOOT_PIN, INPUT_PULLUP);
   for (int i = 0; i < 4; i++) {
     pinMode(dir_pins[i], INPUT_PULLUP);
-    last_dir[i] = digitalRead(dir_pins[i]);
+    attachInterrupt(digitalPinToInterrupt(dir_pins[i]), isrs[i], FALLING);
   }
-  Serial.println("[tb] trackball ready (pins R/U/L/D = 3/2/1/15)");
+  Serial.println("[tb] trackball ready (FALLING interrupts, pins R/U/L/D = 3/2/1/15)");
   bool lastBoot = true;
   unsigned long bootDownAt = 0;
   while (true) {
     for (int i = 0; i < 4; i++) {
-      bool dir = digitalRead(dir_pins[i]);
-      if (dir != last_dir[i]) {
-        last_dir[i] = dir;
-        if (!dir) {
-          InputEvent e = {};
-          e.ts = millis();
-          e.ev = dir_ev[i];
-          xQueueSend(inputQueue, &e, 0);
-          Serial.printf("[tb] %s (pin %d)\n", dir_name[i], dir_pins[i]);
-        }
+      uint32_t n = tbPulse[i];
+      if (n != lastCount[i]) {
+        uint32_t newPulses = n - lastCount[i];
+        lastCount[i] = n;
+        Serial.printf("[tb] %s (pin %d) x%lu\n", dir_name[i], dir_pins[i], (unsigned long)newPulses);
+        InputEvent e = {};
+        e.ts = millis();
+        e.ev = dir_ev[i];
+        xQueueSend(inputQueue, &e, 0);
       }
     }
     bool boot = digitalRead(BOARD_BOOT_PIN);
@@ -251,24 +259,96 @@ static bool sdInit() {
 // ---------- GPS ----------
 static TinyGPSPlus gps;
 static HardwareSerial &gpsSerial = Serial1;
+static uint32_t gpsCharsSeen = 0;
 
 static bool gpsSetup() {
   gpsSerial.begin(GPS_BAUD, SERIAL_8N1, BOARD_GPS_RX_PIN, BOARD_GPS_TX_PIN);
+  delay(100);
+  // L76K init: NMEA on, GPS+GLONASS, vehicle mode.
+  // Harmless if the module is a u-blox variant (ignores $PCAS sentences).
+  gpsSerial.write("$PCAS03,1,1,1,1,1,1,1,1,1,1,,,0,0*02\r\n");
+  delay(250);
+  gpsSerial.write("$PCAS04,5*1C\r\n");
+  delay(250);
+  gpsSerial.write("$PCAS11,3*1E\r\n");
   return true;
+}
+
+// Feed the parser whatever NMEA bytes have arrived; non-blocking.
+static void gpsPoll() {
+  while (gpsSerial.available()) { gps.encode(gpsSerial.read()); gpsCharsSeen++; }
 }
 
 // ---------- Map app ----------
 static int mapZoom = 14;
-static double mapCenterLat = 47.6062;   // default: Seattle
+static double mapCenterLat = 47.6062;   // fallback default: Seattle
 static double mapCenterLon = -122.3321;
 static bool mapFollowGps = true;
+static bool mapTilesScanned = false;
+
+// On first map entry, find tiles on the SD and center/zoom on them so the app
+// shows something useful even before a GPS fix. Picks the deepest zoom level
+// present, then centers on the middle of that level's x/y tile range.
+static void mapScanTiles() {
+  if (!sdOk) return;
+  int bestZoom = -1;
+  uint32_t bestX = 0, bestY = 0;
+  for (int z = 18; z >= 1; z--) {
+    String zdir = String(MAP_TILE_DIR) + "/z" + String(z);
+    if (!SD.exists(zdir)) continue;
+    File zfl = SD.open(zdir);
+    if (!zfl) continue;
+    long minX = -1, maxX = -1, minY = -1, maxY = -1;
+    File xdir;
+    while ((xdir = zfl.openNextFile())) {
+      if (!xdir.isDirectory()) { xdir.close(); continue; }
+      char *end = nullptr;
+      long xv = strtol(xdir.name(), &end, 10);
+      if (!end || *end != '\0' || xv < 0) { xdir.close(); continue; }
+      if (minX < 0 || xv < minX) minX = xv;
+      if (maxX < 0 || xv > maxX) maxX = xv;
+      File ydir;
+      while ((ydir = xdir.openNextFile())) {
+        if (ydir.isDirectory()) { ydir.close(); continue; }
+        if (!String(ydir.name()).endsWith(".bin")) { ydir.close(); continue; }
+        String yname = ydir.name();
+        yname.remove(yname.length() - 4);
+        char *yend = nullptr;
+        long yv = strtol(yname.c_str(), &yend, 10);
+        if (yend && *yend == '\0' && yv >= 0) {
+          if (minY < 0 || yv < minY) minY = yv;
+          if (maxY < 0 || yv > maxY) maxY = yv;
+        }
+        ydir.close();
+      }
+      xdir.close();
+    }
+    zfl.close();
+    if (minX < 0 || minY < 0) continue;
+    bestZoom = z;
+    bestX = (uint32_t)((minX + maxX) / 2);
+    bestY = (uint32_t)((minY + maxY) / 2);
+    break;
+  }
+  if (bestZoom > 0) {
+    mapZoom = bestZoom;
+    mapCenterLat = tileYToLat(bestY, bestZoom);
+    mapCenterLon = tileXToLon(bestX, bestZoom);
+    Serial.printf("[map] tiles found: z%d x%u y%u -> %.5f,%.5f\n",
+                  bestZoom, (unsigned)bestX, (unsigned)bestY, mapCenterLat, mapCenterLon);
+  } else {
+    Serial.println("[map] no tiles found on SD");
+  }
+  mapTilesScanned = true;
+}
 
 static void mapApp() {
   const int step = TILE_STEP;
   bool needsRedraw = true;
   static char statusLine[64];
+  if (!mapTilesScanned) mapScanTiles();
   while (true) {
-    while (gpsSerial.available()) gps.encode(gpsSerial.read());
+    gpsPoll();
     bool hasFix = gps.location.isValid();
     if (mapFollowGps && hasFix) {
       double lat = gps.location.lat();
@@ -813,7 +893,10 @@ void setup() {
 
   Serial.printf("[boot] mic init: %s\n", micSetup() ? "OK" : "FAIL");
   gpsSetup();
-  Serial.println("[boot] GPS serial started (9600, RX=43 TX=44)");
+  Serial.println("[boot] GPS serial started (9600, RX=44 TX=43)");
+  for (int i = 0; i < 30; i++) { gpsPoll(); delay(100); }
+  Serial.printf("[boot] GPS: %lu NMEA bytes in first 3s (0 = check antenna/module)\n",
+                (unsigned long)gpsCharsSeen);
   mainMenu();
 }
 

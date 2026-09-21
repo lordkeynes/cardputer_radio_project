@@ -876,7 +876,7 @@ static void mainMenu() {
   const char *items[] = {"Notes", "Recorder", "Play recordings", "Map"};
   int sel = 0;
   while (true) {
-    drawMenuList("T-Deck Plus", items, 3, sel, sdOk ? "SD OK" : "NO SD CARD!");
+    drawMenuList("T-Deck Plus", items, 4, sel, sdOk ? "SD OK" : "NO SD CARD!");
     InputEvent e;
     if (!getInput(e, 50)) continue;
     if (e.ev == EV_UP) sel = (sel + 3) % 4;

@@ -101,6 +101,24 @@ def main():
     print(f"user-agent: {ua}")
     total, failed = 0, 0
 
+    # On 403 (rate-limit / API-key wall), silently fall back to other servers.
+    fallback_chain = [args.tile_server] + [s for s in ("carto", "opentopomap", "cyclosm") if s != args.tile_server]
+
+    def fetch_tile(z, tx, ty):
+        for server in fallback_chain:
+            url = f"{TILE_SERVERS[server]}/{z}/{tx}/{ty}.png"
+            try:
+                resp = session.get(url, timeout=20)
+                if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
+                    if server != fallback_chain[0]:
+                        print(f"(falling back to {server} after 403)")
+                    return resp.content, server
+            except requests.RequestException:
+                pass
+        return None, None
+
+    active_server = args.tile_server
+
     for z in zooms:
         cx = lon_to_tile_x(args.lon, z)
         cy = lat_to_tile_y(args.lat, z)
@@ -118,18 +136,23 @@ def main():
                 out_path = os.path.join(xdir, f"{ty}.bin")
                 if os.path.exists(out_path) and os.path.getsize(out_path) == TILE_PX * TILE_PX * 2:
                     continue
-                url = f"{tile_server}/{z}/{tx}/{ty}.png"
+                data, srv = fetch_tile(z, tx, ty)
+                if data is None:
+                    failed += 1
+                    print(f"z{z} {tx},{ty} FAILED (all servers)")
+                    continue
                 try:
-                    resp = session.get(url, timeout=20)
-                    resp.raise_for_status()
-                    data = convert_png_to_rgb565(resp.content)
+                    out = convert_png_to_rgb565(data)
                     with open(out_path, "wb") as f:
-                        f.write(data)
+                        f.write(out)
                     total += 1
+                    if srv != active_server:
+                        print(f"(server switched to {srv})")
+                        active_server = srv
                     print(f"z{z} {tx},{ty} ok")
                 except Exception as e:
                     failed += 1
-                    print(f"z{z} {tx},{ty} FAILED: {e}")
+                    print(f"z{z} {tx},{ty} CONVERT FAILED: {e}")
                 time.sleep(0.15)  # be polite to the tile server
 
     print(f"done: {total} tiles written, {failed} failed")

@@ -1,0 +1,245 @@
+/**
+ * WiFi app: scan networks, join with on-device password entry, store
+ * credentials on SD (/wifi/known.txt), auto-connect to known networks at boot.
+ */
+#include <Arduino.h>
+#include <WiFi.h>
+#include <SD.h>
+#include <Arduino_GFX_Library.h>
+#include "utilities.h"
+#include "pda.h"
+
+extern Arduino_GFX *gfx;
+extern bool sdOk;
+
+#define WIFI_DIR "/wifi"
+#define WIFI_FILE WIFI_DIR "/known.txt"
+#define MAX_KNOWN 8
+
+static bool wifiUp = false;
+
+struct KnownNet {
+  String ssid, pass;
+};
+
+static int loadKnown(KnownNet *out, int maxN) {
+  int n = 0;
+  if (!sdOk || !SD.exists(WIFI_FILE)) return 0;
+  File f = SD.open(WIFI_FILE, FILE_READ);
+  if (!f) return 0;
+  String line;
+  while (f.available() && n < maxN) {
+    line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+    int tab = line.indexOf('\t');
+    if (tab < 0) continue;
+    out[n].ssid = line.substring(0, tab);
+    out[n].pass = line.substring(tab + 1);
+    n++;
+  }
+  f.close();
+  return n;
+}
+
+static void saveKnown(KnownNet *nets, int n) {
+  if (!sdOk) return;
+  if (!SD.exists(WIFI_DIR)) SD.mkdir(WIFI_DIR);
+  File f = SD.open(WIFI_FILE, FILE_WRITE);
+  if (!f) return;
+  for (int i = 0; i < n; i++) {
+    f.print(nets[i].ssid);
+    f.print('\t');
+    f.print(nets[i].pass);
+    f.print('\n');
+  }
+  f.close();
+}
+
+bool wifiAutoConnect() {
+  KnownNet known[MAX_KNOWN];
+  int n = loadKnown(known, MAX_KNOWN);
+  if (n == 0) return false;
+  // Strongest-signal-first is handled by trying in stored order; keep simple.
+  for (int attempt = 0; attempt < 2; attempt++) {
+    for (int i = 0; i < n; i++) {
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(known[i].ssid.c_str(), known[i].pass.c_str());
+      uint32_t start = millis();
+      while (WiFi.status() != WL_CONNECTED && millis() - start < 6000) {
+        delay(100);
+      }
+      if (WiFi.status() == WL_CONNECTED) {
+        wifiUp = true;
+        Serial.printf("[wifi] connected to %s (%s)\n",
+                      known[i].ssid.c_str(), WiFi.localIP().toString().c_str());
+        return true;
+      }
+    }
+  }
+  WiFi.disconnect();
+  return false;
+}
+
+bool wifiConnected() { return wifiUp && WiFi.status() == WL_CONNECTED; }
+
+// Simple text prompt at the bottom of the screen; returns entered string.
+static bool promptText(const char *label, String &out) {
+  out = "";
+  gfx->fillRect(0, SCREEN_H - 40, SCREEN_W, 40, BLACK);
+  gfx->setTextSize(1);
+  gfx->setTextColor(RGB565(255, 255, 0), BLACK);
+  gfx->setCursor(8, SCREEN_H - 36);
+  gfx->print(label);
+  gfx->print(": ");
+  while (true) {
+    InputEventP e;
+    if (!pdaGetInput(e, 50)) continue;
+    if (e.ev == PDA_EV_NEWLINE || e.ev == PDA_EV_SELECT) return out.length() > 0;
+    if (e.ev == PDA_EV_CHAR) {
+      if (out.length() < 63) { out += e.ch; gfx->print(e.ch); }
+    } else if (e.ev == PDA_EV_DELETE) {
+      if (out.length() > 0) {
+        out.remove(out.length() - 1);
+        gfx->print('\b'); gfx->print(' '); gfx->print('\b');
+      }
+    } else if (e.ev == PDA_EV_BACK || e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_LEFT) {
+      return false;
+    }
+  }
+}
+
+void wifiApp() {
+  const int visible = 8;
+  int sel = 0;
+  int nScan = 0;
+  static String ssids[16];
+  static int32_t rssis[16];
+  bool needsRedraw = true;
+  bool rescanning = false;
+  while (true) {
+    if (needsRedraw || rescanning) {
+      needsRedraw = false;
+      rescanning = false;
+      gfx->fillScreen(BLACK);
+      gfx->setTextSize(2);
+      gfx->setTextColor(RGB565(0, 255, 160), BLACK);
+      gfx->setCursor(8, 8);
+      gfx->print("WiFi");
+      gfx->setTextSize(1);
+      if (wifiConnected()) {
+        gfx->setTextColor(RGB565(0, 255, 0), BLACK);
+        gfx->setCursor(240, 12);
+        gfx->printf("IP %s", WiFi.localIP().toString().c_str());
+      }
+      gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+      gfx->setCursor(8, 26);
+      gfx->print("Scanning...");
+      nScan = 0;
+      int found = WiFi.scanNetworks();
+      for (int i = 0; i < found && nScan < 16; i++) {
+        String s = WiFi.SSID(i);
+        if (s.length() == 0) continue;
+        bool dup = false;
+        for (int j = 0; j < nScan; j++) if (ssids[j] == s) { dup = true; break; }
+        if (dup) continue;
+        ssids[nScan] = s;
+        rssis[nScan] = WiFi.RSSI(i);
+        nScan++;
+      }
+      WiFi.scanDelete();
+      gfx->fillRect(0, 26, SCREEN_W, 12, BLACK);
+      gfx->setTextColor(WHITE, BLACK);
+      gfx->setCursor(8, 26);
+      gfx->printf("%d networks - click to join", nScan);
+      const int rowH = 18;
+      int top = 0;
+      if (nScan > visible && sel >= visible) top = sel - visible + 1;
+      for (int i = 0; i < visible && top + i < nScan; i++) {
+        int idx = top + i;
+        int y = 40 + i * rowH;
+        if (idx == sel) {
+          gfx->fillRect(0, y - 2, SCREEN_W, rowH - 2, RGB565(0, 120, 255));
+          gfx->setTextColor(BLACK, RGB565(0, 120, 255));
+        } else {
+          gfx->setTextColor(WHITE, BLACK);
+        }
+        gfx->setCursor(8, y);
+        gfx->print(ssids[idx]);
+        gfx->setTextColor(RGB565(150, 150, 150),
+                          (idx == sel) ? RGB565(0, 120, 255) : BLACK);
+        gfx->setCursor(240, y);
+        gfx->printf("%d dBm", (int)rssis[idx]);
+      }
+      gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+      gfx->setCursor(4, SCREEN_H - 20);
+      gfx->print("Up/Down pick  r rescan  Click join  Long-click back");
+      if (nScan == 0) {
+        gfx->setTextColor(RGB565(255, 255, 0), BLACK);
+        gfx->setCursor(8, 44);
+        gfx->print("No networks found - press r");
+      }
+    }
+    InputEventP e;
+    if (!pdaGetInput(e, 100)) continue;
+    switch (e.ev) {
+      case PDA_EV_UP: if (sel > 0) { sel--; needsRedraw = true; } break;
+      case PDA_EV_DOWN: if (sel < nScan - 1) { sel++; needsRedraw = true; } break;
+      case PDA_EV_CHAR:
+        if (e.ch == 'r' || e.ch == 'R') rescanning = true;
+        break;
+      case PDA_EV_SELECT:
+      case PDA_EV_NEWLINE: {
+        if (sel < 0 || sel >= nScan) break;
+        String ssid = ssids[sel];
+        String pass;
+        gfx->fillRect(0, SCREEN_H - 40, SCREEN_W, 40, BLACK);
+        gfx->setTextSize(1);
+        gfx->setTextColor(RGB565(255, 255, 0), BLACK);
+        gfx->setCursor(8, SCREEN_H - 36);
+        gfx->printf("Joining %s ...", ssid.c_str());
+        // Try known credentials first
+        KnownNet known[MAX_KNOWN];
+        int nKnown = loadKnown(known, MAX_KNOWN);
+        bool haveKey = false;
+        for (int i = 0; i < nKnown; i++) {
+          if (known[i].ssid == ssid) { pass = known[i].pass; haveKey = true; break; }
+        }
+        if (!haveKey) {
+          if (!promptText("Password", pass)) break;
+        }
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(ssid.c_str(), pass.c_str());
+        uint32_t start = millis();
+        while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) delay(100);
+        gfx->fillRect(0, SCREEN_H - 40, SCREEN_W, 40, BLACK);
+        gfx->setCursor(8, SCREEN_H - 36);
+        if (WiFi.status() == WL_CONNECTED) {
+          wifiUp = true;
+          gfx->setTextColor(RGB565(0, 255, 0), BLACK);
+          gfx->printf("Connected: %s", WiFi.localIP().toString().c_str());
+          // Save/update credentials
+          int slot = -1;
+          for (int i = 0; i < nKnown; i++) if (known[i].ssid == ssid) { slot = i; break; }
+          if (slot < 0 && nKnown < MAX_KNOWN) slot = nKnown++;
+          if (slot >= 0) {
+            known[slot].ssid = ssid;
+            known[slot].pass = pass;
+            saveKnown(known, nKnown);
+          }
+        } else {
+          gfx->setTextColor(RGB565(255, 80, 80), BLACK);
+          gfx->print("Failed to connect");
+        }
+        delay(1200);
+        needsRedraw = true;
+        break;
+      }
+      case PDA_EV_LONGSELECT:
+      case PDA_EV_BACK:
+      case PDA_EV_LEFT:
+        return;
+      default: break;
+    }
+  }
+}

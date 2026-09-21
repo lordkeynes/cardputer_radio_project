@@ -1,9 +1,10 @@
 # T-Deck Notes · Recorder · Maps
 
-Offline-first firmware for the **LilyGO T-Deck Plus** (ESP32-S3, 2.8" ST7789
+Offline-first PDA firmware for the **LilyGO T-Deck Plus** (ESP32-S3, 2.8" ST7789
 320x240, ES7210 mic, BBQ10-style I2C keyboard, trackball, microSD, L76K GPS).
-Three apps — notes, audio recording/playback, and an offline OSM map — with no
-network dependency at runtime.
+Apps: notes, to-do list, audio recording/playback, offline OSM map, clock,
+calendar, WiFi, and battery status. The screen sleeps after 45 s of inactivity;
+any key or trackball event wakes it.
 
 ## Build & flash
 
@@ -20,6 +21,27 @@ pio device monitor     # 115200 serial console
 Browse/create/delete notes saved to `/notes/*.txt` on the SD card. In the
 editor: type to write, **Enter** starts a new line, trackball click or **BOOT**
 saves, long-press exits without saving.
+
+### To-do
+Checklist app stored at `/todo/todo.txt` on the SD card. Trackball up/down picks
+a task, click/Enter toggles done, **n** adds a new task (type it, Enter to
+finish), **d** deletes the selected task, long-click exits and saves.
+
+### Clock & calendar
+Clock shows time from GPS once a fix is acquired (the T-Deck has no RTC
+battery; time is lost on power-off). Calendar is a month grid; up/down
+changes month, click returns to today.
+
+### Battery
+Voltage estimate from the battery ADC (GPIO 4). Shown in the main-menu status
+bar and in a dedicated Battery screen (percent + millivolts). It is a voltage
+curve estimate, not a calibrated fuel gauge — treat percentages as approximate,
+especially between 30–90%.
+
+### WiFi
+Scans networks, joins with on-device password entry via the keyboard, stores
+credentials in `/wifi/known.txt` on SD, and auto-connects at boot to any known
+network in range. No cloud dependency; passwords live on the SD card.
 
 ### Recorder
 Records mono WAV files to `/rec/`. A live peak meter shows input level while

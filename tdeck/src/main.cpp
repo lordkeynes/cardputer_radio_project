@@ -13,6 +13,7 @@
 #include "es7210.h"
 #include "utilities.h"
 #include "mapapp.h"
+#include "pda.h"
 
 #define SCREEN_W 320
 #define SCREEN_H 240
@@ -39,14 +40,34 @@ Arduino_GFX *gfx = new Arduino_ST7789(bus, GFX_NOT_DEFINED /* RST */, 1 /* rotat
 
 enum AppEvent { EV_NONE, EV_UP, EV_DOWN, EV_LEFT, EV_RIGHT, EV_SELECT, EV_LONGSELECT, EV_NEWLINE, EV_BACK, EV_SPACE, EV_CHAR, EV_DELETE };
 
+struct InputEvent;
+static bool getInput(InputEvent &e, unsigned long waitMs);
+
+
+// Bridge declarations for pda.cpp / wifiapp.cpp
+void wifiApp();
+bool wifiAutoConnect();
+bool wifiConnected();
+
 struct InputEvent {
   AppEvent ev;
   char ch;
   unsigned long ts;
 };
 
+// Bridge for pda.cpp / wifiapp.cpp: same event codes as AppEvent (minus EV_NONE).
+bool pdaGetInput(InputEventP &pe, uint32_t waitMs) {
+  InputEvent e;
+  if (!getInput(e, waitMs)) return false;
+  pe.ev = (uint8_t)e.ev;
+  pe.ch = e.ch;
+  pe.ts = e.ts;
+  return true;
+}
+
+
 static QueueHandle_t inputQueue;
-static bool sdOk = false;
+bool sdOk = false;   // non-static: used by pda.cpp/wifiapp.cpp
 
 // ---------- Input: keyboard (I2C @0x55) + trackball ----------
 #define LILYGO_KB_SLAVE_ADDRESS 0x55
@@ -96,6 +117,8 @@ static void IRAM_ATTR tbIsr1() { tbPulse[1]++; }
 static void IRAM_ATTR tbIsr2() { tbPulse[2]++; }
 static void IRAM_ATTR tbIsr3() { tbPulse[3]++; }
 
+static void screenSleepTick();
+
 static void trackballTask(void *pv) {
   const uint8_t dir_pins[4] = {TB_PIN_RIGHT, TB_PIN_UP, TB_PIN_LEFT, TB_PIN_DOWN};
   const AppEvent dir_ev[4] = {EV_RIGHT, EV_UP, EV_LEFT, EV_DOWN};
@@ -140,12 +163,23 @@ static void trackballTask(void *pv) {
       bootDownAt = 0;
     }
     lastBoot = boot;
+    screenSleepTick();
     vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
 
 static bool getInput(InputEvent &e, unsigned long waitMs) {
-  return xQueueReceive(inputQueue, &e, pdMS_TO_TICKS(waitMs)) == pdTRUE;
+  bool got = xQueueReceive(inputQueue, &e, pdMS_TO_TICKS(waitMs)) == pdTRUE;
+  if (got) pdaNoteActivity();
+  return got;
+}
+
+// Periodic screen-sleep check; called from the trackball task (10ms loop)
+static void screenSleepTick() {
+  static uint32_t lastTick = 0;
+  if (millis() - lastTick < 500) return;
+  lastTick = millis();
+  pdaScreenTick();
 }
 
 // ---------- UI helpers ----------
@@ -357,6 +391,10 @@ static void mapApp() {
   while (true) {
     gpsPoll();
     bool hasFix = gps.location.isValid();
+    if (hasFix && gps.time.isValid() && gps.date.isValid() && !pdaTimeSynced()) {
+      pdaApplyGpsTime(gps.date.year(), gps.date.month(), gps.date.day(),
+                     gps.time.hour(), gps.time.minute(), gps.time.second());
+    }
     if (mapFollowGps && hasFix) {
       // Recenter only if GPS moved meaningfully (~2px at this zoom) or 2s passed,
       // so position jitter doesn't trigger constant full redraws.
@@ -886,19 +924,54 @@ static void playbackApp() {
 
 // ---------- Main menu ----------
 static void mainMenu() {
-  const char *items[] = {"Notes", "Recorder", "Play recordings", "Map"};
+  const char *items[] = {"Notes", "To-do", "Recorder", "Play recs", "Map",
+                         "Clock", "Calendar", "WiFi", "Battery"};
+  const int nItems = 9;
   int sel = 0;
+  char statusBuf[40];
   while (true) {
-    drawMenuList("T-Deck Plus", items, 4, sel, sdOk ? "SD OK" : "NO SD CARD!");
+    snprintf(statusBuf, sizeof(statusBuf), "Batt %d%%  %s",
+             batteryPercent(), wifiConnected() ? "WiFi OK" : (sdOk ? "SD OK" : "NO SD"));
+    drawMenuList("T-Deck Plus", items, nItems, sel, statusBuf);
     InputEvent e;
     if (!getInput(e, 50)) continue;
-    if (e.ev == EV_UP) sel = (sel + 3) % 4;
-    else if (e.ev == EV_DOWN) sel = (sel + 1) % 4;
+    if (e.ev == EV_UP) sel = (sel + nItems - 1) % nItems;
+    else if (e.ev == EV_DOWN) sel = (sel + 1) % nItems;
     else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
-      if (sel == 0) notesApp();
-      else if (sel == 1) recorderApp();
-      else if (sel == 2) playbackApp();
-      else mapApp();
+      switch (sel) {
+        case 0: notesApp(); break;
+        case 1: todoApp(); break;
+        case 2: recorderApp(); break;
+        case 3: playbackApp(); break;
+        case 4: mapApp(); break;
+        case 5: clockApp(); break;
+        case 6: calendarApp(); break;
+        case 7: wifiApp(); break;
+        case 8: {
+          gfx->fillScreen(BLACK);
+          gfx->setTextSize(2);
+          gfx->setTextColor(RGB565(0, 255, 160), BLACK);
+          gfx->setCursor(20, 30);
+          gfx->print("Battery");
+          gfx->setTextSize(2);
+          gfx->setTextColor(WHITE, BLACK);
+          gfx->setCursor(20, 70);
+          gfx->printf("%d%%  %d mV", batteryPercent(), batteryMillivolts());
+          gfx->setTextSize(1);
+          gfx->setTextColor(RGB565(150, 150, 150), BLACK);
+          gfx->setCursor(20, 110);
+          gfx->print("ADC raw sample; percent is an estimate from");
+          gfx->setCursor(20, 122);
+          gfx->print("voltage, not a calibrated fuel gauge.");
+          gfx->setCursor(4, SCREEN_H - 10);
+          gfx->setTextColor(WHITE, BLACK);
+          gfx->print("Any key = back");
+          InputEvent w;
+          while (!getInput(w, 50)) {}
+          break;
+        }
+        default: break;
+      }
       uiScreenChanged();
     }
   }
@@ -941,6 +1014,13 @@ void setup() {
   for (int i = 0; i < 30; i++) { gpsPoll(); delay(100); }
   Serial.printf("[boot] GPS: %lu NMEA bytes in first 3s (0 = check antenna/module)\n",
                 (unsigned long)gpsCharsSeen);
+  Serial.printf("[boot] battery: %d%% (%d mV)\n", batteryPercent(), batteryMillivolts());
+  if (wifiAutoConnect()) {
+    Serial.println("[boot] WiFi connected");
+  } else {
+    Serial.println("[boot] WiFi: no known network in range");
+  }
+  pdaNoteActivity();
   mainMenu();
 }
 

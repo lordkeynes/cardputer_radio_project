@@ -83,8 +83,8 @@ static void keyboardTask(void *pv) {
   }
 }
 
-#define TB_PIN_RIGHT BOARD_TBOX_G02
-#define TB_PIN_UP    BOARD_TBOX_G01
+#define TB_PIN_UP    BOARD_TBOX_G02
+#define TB_PIN_RIGHT  BOARD_TBOX_G01
 #define TB_PIN_LEFT  BOARD_TBOX_G04
 #define TB_PIN_DOWN  BOARD_TBOX_G03
 

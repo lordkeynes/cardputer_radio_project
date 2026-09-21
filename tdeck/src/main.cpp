@@ -75,11 +75,22 @@ static void keyboardTask(void *pv) {
   }
 }
 
+#define TB_PIN_RIGHT BOARD_TBOX_G02
+#define TB_PIN_UP    BOARD_TBOX_G01
+#define TB_PIN_LEFT  BOARD_TBOX_G04
+#define TB_PIN_DOWN  BOARD_TBOX_G03
+
 static void trackballTask(void *pv) {
-  const uint8_t dir_pins[4] = {BOARD_TBOX_G02, BOARD_TBOX_G01, BOARD_TBOX_G04, BOARD_TBOX_G03};
-  bool last_dir[4] = {false};
+  const uint8_t dir_pins[4] = {TB_PIN_RIGHT, TB_PIN_UP, TB_PIN_LEFT, TB_PIN_DOWN};
+  const AppEvent dir_ev[4] = {EV_RIGHT, EV_UP, EV_LEFT, EV_DOWN};
+  const char *dir_name[4] = {"RIGHT", "UP", "LEFT", "DOWN"};
+  bool last_dir[4] = {false, false, false, false};
   pinMode(BOARD_BOOT_PIN, INPUT_PULLUP);
-  for (int i = 0; i < 4; i++) pinMode(dir_pins[i], INPUT_PULLUP);
+  for (int i = 0; i < 4; i++) {
+    pinMode(dir_pins[i], INPUT_PULLUP);
+    last_dir[i] = digitalRead(dir_pins[i]);
+  }
+  Serial.println("[tb] trackball ready (pins R/U/L/D = 3/2/1/15)");
   bool lastBoot = true;
   unsigned long bootDownAt = 0;
   while (true) {
@@ -87,10 +98,13 @@ static void trackballTask(void *pv) {
       bool dir = digitalRead(dir_pins[i]);
       if (dir != last_dir[i]) {
         last_dir[i] = dir;
-        InputEvent e = {};
-        e.ts = millis();
-        e.ev = (i == 0) ? EV_RIGHT : (i == 1) ? EV_UP : (i == 2) ? EV_LEFT : EV_DOWN;
-        xQueueSend(inputQueue, &e, 0);
+        if (!dir) {
+          InputEvent e = {};
+          e.ts = millis();
+          e.ev = dir_ev[i];
+          xQueueSend(inputQueue, &e, 0);
+          Serial.printf("[tb] %s (pin %d)\n", dir_name[i], dir_pins[i]);
+        }
       }
     }
     bool boot = digitalRead(BOARD_BOOT_PIN);

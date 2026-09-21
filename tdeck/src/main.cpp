@@ -27,7 +27,7 @@
 #define MAX_FILES 32
 
 Arduino_DataBus *bus = new Arduino_HWSPI(BOARD_TFT_DC, BOARD_TFT_CS);
-Arduino_GFX *gfx = new Arduino_ST7789(bus, 20 /* RST */, 0 /* rotation */, true /* IPS */, 320, 240);
+Arduino_GFX *gfx = new Arduino_ST7789(bus, GFX_NOT_DEFINED /* RST */, 1 /* rotation */, false /* IPS */, 320, 240);
 
 enum AppEvent { EV_NONE, EV_UP, EV_DOWN, EV_LEFT, EV_RIGHT, EV_SELECT, EV_BACK, EV_SPACE, EV_CHAR, EV_DELETE };
 
@@ -110,7 +110,15 @@ static bool getInput(InputEvent &e, unsigned long waitMs) {
 
 // ---------- UI helpers ----------
 static void uiInit() {
-  gfx->begin(80000000);
+  pinMode(BOARD_SDCARD_CS, OUTPUT);
+  pinMode(RADIO_CS_PIN, OUTPUT);
+  pinMode(BOARD_TFT_CS, OUTPUT);
+  digitalWrite(BOARD_SDCARD_CS, HIGH);
+  digitalWrite(RADIO_CS_PIN, HIGH);
+  digitalWrite(BOARD_TFT_CS, HIGH);
+  pinMode(BOARD_SPI_MISO, INPUT_PULLUP);
+  SPI.begin(BOARD_SPI_SCK, BOARD_SPI_MISO, BOARD_SPI_MOSI);
+  gfx->begin(40000000);
   pinMode(BOARD_BL_PIN, OUTPUT);
   digitalWrite(BOARD_BL_PIN, HIGH);
   gfx->fillScreen(BLACK);
@@ -141,15 +149,7 @@ static void drawStatus(const char *msg) {
 
 // ---------- SD ----------
 static bool sdInit() {
-  pinMode(BOARD_SDCARD_CS, OUTPUT);
-  pinMode(RADIO_CS_PIN, OUTPUT);
-  pinMode(BOARD_TFT_CS, OUTPUT);
-  digitalWrite(BOARD_SDCARD_CS, HIGH);
-  digitalWrite(RADIO_CS_PIN, HIGH);
-  digitalWrite(BOARD_TFT_CS, HIGH);
-  pinMode(BOARD_SPI_MISO, INPUT_PULLUP);
-  SPI.begin(BOARD_SPI_SCK, BOARD_SPI_MISO, BOARD_SPI_MOSI);
-  if (!SD.begin(BOARD_SDCARD_CS, SPI, 800000U)) return false;
+  if (!SD.begin(BOARD_SDCARD_CS, SPI, 8000000)) return false;
   if (!SD.exists(NOTE_DIR)) SD.mkdir(NOTE_DIR);
   if (!SD.exists(REC_DIR)) SD.mkdir(REC_DIR);
   return true;
@@ -593,14 +593,22 @@ void setup() {
 
   inputQueue = xQueueCreate(16, sizeof(InputEvent));
 
+  Serial.println("[boot] SPI bus init...");
   uiInit();
+  Serial.println("[boot] display init done");
+
   drawTitle("T-Deck Plus");
   gfx->setTextSize(1);
   gfx->setCursor(8, 40);
   gfx->println("Mounting SD card...");
 
   sdOk = sdInit();
-  Serial.printf("SD: %s\n", sdOk ? "OK" : "FAIL");
+  Serial.printf("[boot] SD: %s\n", sdOk ? "OK" : "FAIL");
+  if (sdOk) {
+    Serial.printf("[boot] SD type: %s, size: %lu MB\n",
+                  SD.cardType() == CARD_SDHC ? "SDHC" : SD.cardType() == CARD_SD ? "SDSC" : "?",
+                  (unsigned long)(SD.cardSize() / (1024UL * 1024UL)));
+  }
 
   xTaskCreatePinnedToCore(keyboardTask, "kb", 4096, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(trackballTask, "tb", 2048, NULL, 1, NULL, 0);
@@ -608,7 +616,7 @@ void setup() {
   drawStatus(sdOk ? "SD OK" : "No SD card");
   delay(600);
 
-  micSetup();
+  Serial.printf("[boot] mic init: %s\n", micSetup() ? "OK" : "FAIL");
   mainMenu();
 }
 

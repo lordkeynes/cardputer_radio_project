@@ -9,8 +9,10 @@
 #include <SD.h>
 #include <driver/i2s.h>
 #include <Arduino_GFX_Library.h>
+#include <TinyGPS++.h>
 #include "es7210.h"
 #include "utilities.h"
+#include "mapapp.h"
 
 #define SCREEN_W 320
 #define SCREEN_H 240
@@ -18,6 +20,12 @@
 
 #define NOTE_DIR "/notes"
 #define REC_DIR  "/recordings"
+
+#define BOARD_GPS_RX_PIN 43
+#define BOARD_GPS_TX_PIN 44
+#define GPS_BAUD 9600
+#define MAP_TILE_DIR "/map"
+#define TILE_STEP 64
 
 #define MIC_SAMPLE_RATE 16000
 #define MIC_I2S_PORT I2S_NUM_1
@@ -238,6 +246,83 @@ static bool sdInit() {
   if (!SD.exists(NOTE_DIR)) SD.mkdir(NOTE_DIR);
   if (!SD.exists(REC_DIR)) SD.mkdir(REC_DIR);
   return true;
+}
+
+// ---------- GPS ----------
+static TinyGPSPlus gps;
+static HardwareSerial &gpsSerial = Serial1;
+
+static bool gpsSetup() {
+  gpsSerial.begin(GPS_BAUD, SERIAL_8N1, BOARD_GPS_RX_PIN, BOARD_GPS_TX_PIN);
+  return true;
+}
+
+// ---------- Map app ----------
+static int mapZoom = 14;
+static double mapCenterLat = 47.6062;   // default: Seattle
+static double mapCenterLon = -122.3321;
+static bool mapFollowGps = true;
+
+static void mapApp() {
+  const int step = TILE_STEP;
+  bool needsRedraw = true;
+  static char statusLine[64];
+  while (true) {
+    while (gpsSerial.available()) gps.encode(gpsSerial.read());
+    bool hasFix = gps.location.isValid();
+    if (mapFollowGps && hasFix) {
+      double lat = gps.location.lat();
+      double lon = gps.location.lng();
+      if (lat != mapCenterLat || lon != mapCenterLon) {
+        mapCenterLat = lat;
+        mapCenterLon = lon;
+        needsRedraw = true;
+      }
+    }
+    if (needsRedraw) {
+      needsRedraw = false;
+      double n = pow(2, mapZoom);
+      double latRad = mapCenterLat * M_PI / 180.0;
+      double centerTileXf = (mapCenterLon + 180.0) / 360.0 * n;
+      double centerTileYf = (1.0 - log(tan(latRad) + 1.0 / cos(latRad)) / M_PI) / 2.0 * n;
+      int centerPixelX = (int)(centerTileXf * 256);
+      int centerPixelY = (int)(centerTileYf * 256);
+      mapAppRender(gfx, &gps, centerPixelX, centerPixelY, mapZoom, SCREEN_W, SCREEN_H - 16);
+      // marker at center
+      int mx = SCREEN_W / 2, my = (SCREEN_H - 16) / 2;
+      gfx->fillCircle(mx, my, 3, RED);
+      gfx->drawCircle(mx, my, 6, RED);
+      // status bar
+      gfx->fillRect(0, SCREEN_H - 16, SCREEN_W, 16, BLACK);
+      gfx->setTextSize(1);
+      gfx->setTextColor(RGB565(255, 255, 0), BLACK);
+      gfx->setCursor(2, SCREEN_H - 12);
+      snprintf(statusLine, sizeof(statusLine), "z%d %s %.5f,%.5f  sats:%d",
+               mapZoom, hasFix ? "GPS" : "no-fix",
+               mapCenterLat, mapCenterLon,
+               gps.satellites.isValid() ? gps.satellites.value() : 0);
+      gfx->print(statusLine);
+    }
+    InputEvent e;
+    if (!getInput(e, 100)) continue;
+    switch (e.ev) {
+      case EV_UP:    mapFollowGps = false; mapCenterLat = tileYToLat(latToTileY(mapCenterLat, mapZoom) * 256 - step, mapZoom);
+        needsRedraw = true; break;
+      case EV_DOWN:  mapFollowGps = false; mapCenterLat = tileYToLat(latToTileY(mapCenterLat, mapZoom) * 256 + step, mapZoom);
+        needsRedraw = true; break;
+      case EV_LEFT:  mapFollowGps = false; mapCenterLon = tileXToLon(lonToTileX(mapCenterLon, mapZoom) * 256 - step, mapZoom);
+        needsRedraw = true; break;
+      case EV_RIGHT: mapFollowGps = false; mapCenterLon = tileXToLon(lonToTileX(mapCenterLon, mapZoom) * 256 + step, mapZoom);
+        needsRedraw = true; break;
+      case EV_SELECT: mapFollowGps = true; needsRedraw = true; break;
+      case EV_LONGSELECT: return;
+      case EV_CHAR:
+        if (e.ch == '+' || e.ch == '=') { if (mapZoom < 18) { mapZoom++; needsRedraw = true; } }
+        else if (e.ch == '-') { if (mapZoom > 1) { mapZoom--; needsRedraw = true; } }
+        break;
+      default: break;
+    }
+  }
 }
 
 // ---------- Notes app ----------
@@ -677,18 +762,19 @@ static void playbackApp() {
 
 // ---------- Main menu ----------
 static void mainMenu() {
-  const char *items[] = {"Notes", "Recorder", "Play recordings"};
+  const char *items[] = {"Notes", "Recorder", "Play recordings", "Map"};
   int sel = 0;
   while (true) {
     drawMenuList("T-Deck Plus", items, 3, sel, sdOk ? "SD OK" : "NO SD CARD!");
     InputEvent e;
     if (!getInput(e, 50)) continue;
-    if (e.ev == EV_UP) sel = (sel + 2) % 3;
-    else if (e.ev == EV_DOWN) sel = (sel + 1) % 3;
+    if (e.ev == EV_UP) sel = (sel + 3) % 4;
+    else if (e.ev == EV_DOWN) sel = (sel + 1) % 4;
     else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
       if (sel == 0) notesApp();
       else if (sel == 1) recorderApp();
-      else playbackApp();
+      else if (sel == 2) playbackApp();
+      else mapApp();
       uiScreenChanged();
     }
   }
@@ -726,6 +812,8 @@ void setup() {
   delay(600);
 
   Serial.printf("[boot] mic init: %s\n", micSetup() ? "OK" : "FAIL");
+  gpsSetup();
+  Serial.println("[boot] GPS serial started (9600, RX=43 TX=44)");
   mainMenu();
 }
 

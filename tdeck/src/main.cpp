@@ -347,26 +347,37 @@ static void mapApp() {
   bool needsRedraw = true;
   static char statusLine[64];
   if (!mapTilesScanned) mapScanTiles();
+  // Center in global pixel space at the current zoom (kept as double so
+  // panning moves in smooth pixel steps instead of snapping to tile edges).
+  double n = pow(2, mapZoom);
+  double latRad = mapCenterLat * M_PI / 180.0;
+  double centerPixelXf = (mapCenterLon + 180.0) / 360.0 * n * 256.0;
+  double centerPixelYf = (1.0 - log(tan(latRad) + 1.0 / cos(latRad)) / M_PI) / 2.0 * n * 256.0;
+  uint32_t lastRedrawMs = 0;
   while (true) {
     gpsPoll();
     bool hasFix = gps.location.isValid();
     if (mapFollowGps && hasFix) {
-      double lat = gps.location.lat();
-      double lon = gps.location.lng();
-      if (lat != mapCenterLat || lon != mapCenterLon) {
-        mapCenterLat = lat;
-        mapCenterLon = lon;
+      // Recenter only if GPS moved meaningfully (~2px at this zoom) or 2s passed,
+      // so position jitter doesn't trigger constant full redraws.
+      double nn = pow(2, mapZoom);
+      double lr = gps.location.lat() * M_PI / 180.0;
+      double gpx = (gps.location.lng() + 180.0) / 360.0 * nn * 256.0;
+      double gpy = (1.0 - log(tan(lr) + 1.0 / cos(lr)) / M_PI) / 2.0 * nn * 256.0;
+      if (fabs(gpx - centerPixelXf) > 2 || fabs(gpy - centerPixelYf) > 2) {
+        centerPixelXf = gpx;
+        centerPixelYf = gpy;
         needsRedraw = true;
       }
     }
-    if (needsRedraw) {
+    if (needsRedraw && millis() - lastRedrawMs > 250) {
       needsRedraw = false;
-      double n = pow(2, mapZoom);
-      double latRad = mapCenterLat * M_PI / 180.0;
-      double centerTileXf = (mapCenterLon + 180.0) / 360.0 * n;
-      double centerTileYf = (1.0 - log(tan(latRad) + 1.0 / cos(latRad)) / M_PI) / 2.0 * n;
-      int centerPixelX = (int)(centerTileXf * 256);
-      int centerPixelY = (int)(centerTileYf * 256);
+      lastRedrawMs = millis();
+      mapCenterLon = (centerPixelXf / (n * 256.0)) * 360.0 - 180.0;
+      double nnlat = M_PI - 2.0 * M_PI * centerPixelYf / (n * 256.0);
+      mapCenterLat = 180.0 / M_PI * atan(0.5 * (exp(nnlat) - exp(-nnlat)));
+      int centerPixelX = (int)centerPixelXf;
+      int centerPixelY = (int)centerPixelYf;
       mapAppRender(gfx, &gps, centerPixelX, centerPixelY, mapZoom, SCREEN_W, SCREEN_H - 16);
       // marker at center
       int mx = SCREEN_W / 2, my = (SCREEN_H - 16) / 2;
@@ -386,19 +397,39 @@ static void mapApp() {
     InputEvent e;
     if (!getInput(e, 100)) continue;
     switch (e.ev) {
-      case EV_UP:    mapFollowGps = false; mapCenterLat = tileYToLat(latToTileY(mapCenterLat, mapZoom) * 256 - step, mapZoom);
+      case EV_UP:    mapFollowGps = false; centerPixelYf -= step; needsRedraw = true; break;
+      case EV_DOWN:  mapFollowGps = false; centerPixelYf += step; needsRedraw = true; break;
+      case EV_LEFT:  mapFollowGps = false; centerPixelXf -= step; needsRedraw = true; break;
+      case EV_RIGHT: mapFollowGps = false; centerPixelXf += step; needsRedraw = true; break;
+      case EV_SELECT: {
+        mapFollowGps = true;
+        if (hasFix) {
+          double nn = pow(2, mapZoom);
+          double lr = gps.location.lat() * M_PI / 180.0;
+          centerPixelXf = (gps.location.lng() + 180.0) / 360.0 * nn * 256.0;
+          centerPixelYf = (1.0 - log(tan(lr) + 1.0 / cos(lr)) / M_PI) / 2.0 * nn * 256.0;
+        }
         needsRedraw = true; break;
-      case EV_DOWN:  mapFollowGps = false; mapCenterLat = tileYToLat(latToTileY(mapCenterLat, mapZoom) * 256 + step, mapZoom);
-        needsRedraw = true; break;
-      case EV_LEFT:  mapFollowGps = false; mapCenterLon = tileXToLon(lonToTileX(mapCenterLon, mapZoom) * 256 - step, mapZoom);
-        needsRedraw = true; break;
-      case EV_RIGHT: mapFollowGps = false; mapCenterLon = tileXToLon(lonToTileX(mapCenterLon, mapZoom) * 256 + step, mapZoom);
-        needsRedraw = true; break;
-      case EV_SELECT: mapFollowGps = true; needsRedraw = true; break;
+      }
       case EV_LONGSELECT: return;
       case EV_CHAR:
-        if (e.ch == '+' || e.ch == '=') { if (mapZoom < 18) { mapZoom++; needsRedraw = true; } }
-        else if (e.ch == '-') { if (mapZoom > 1) { mapZoom--; needsRedraw = true; } }
+        if (e.ch == '+' || e.ch == '=') {
+          if (mapZoom < 18) {
+            mapZoom++;
+            centerPixelXf *= 2;
+            centerPixelYf *= 2;
+            n = pow(2, mapZoom);
+            needsRedraw = true;
+          }
+        } else if (e.ch == '-') {
+          if (mapZoom > 1) {
+            mapZoom--;
+            centerPixelXf /= 2;
+            centerPixelYf /= 2;
+            n = pow(2, mapZoom);
+            needsRedraw = true;
+          }
+        }
         break;
       default: break;
     }

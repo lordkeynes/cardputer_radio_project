@@ -29,8 +29,13 @@ try:
 except ImportError:
     sys.exit("pip install pillow requests")
 
-TILE_SERVER = "https://tile.openstreetmap.org"
-HEADERS = {"User-Agent": "tdeck-notes-recorder/1.0 (offline map for personal use)"}
+TILE_SERVERS = {
+    "osm": "https://tile.openstreetmap.org",
+    "carto": "https://basemaps.cartocdn.com/rastertiles/voyager",
+    "carto-light": "https://basemaps.cartocdn.com/light_all",
+    "opentopomap": "https://tile.opentopomap.org",
+    "cyclosm": "https://a.tile-cyclosm.openstreetmap.fr/cyclosm",
+}
 TILE_PX = 256
 
 
@@ -73,7 +78,15 @@ def main():
     ap.add_argument("--zooms", default="10-16", help="zoom range, e.g. 10-16 or 14")
     ap.add_argument("--radius-tiles", type=int, default=6,
                     help="tiles around center at each zoom (6 => ~13x13 area)")
+    ap.add_argument("--tile-server", default="carto", choices=sorted(TILE_SERVERS),
+                    help="tile provider: carto (default, no API key), osm, opentopomap, cyclosm")
+    ap.add_argument("--contact", default=None,
+                    help="your email or URL; required by OSM tile policy, appended to the User-Agent")
     args = ap.parse_args()
+
+    tile_server = TILE_SERVERS[args.tile_server]
+    ua = f"tdeck-notes-recorder/1.0 ({args.contact})" if args.contact else "tdeck-notes-recorder/1.0"
+    HEADERS = {"User-Agent": ua}
 
     zooms = []
     if "-" in args.zooms:
@@ -84,6 +97,8 @@ def main():
 
     session = requests.Session()
     session.headers.update(HEADERS)
+    print(f"tile server: {args.tile_server} ({tile_server})")
+    print(f"user-agent: {ua}")
     total, failed = 0, 0
 
     for z in zooms:
@@ -103,7 +118,7 @@ def main():
                 out_path = os.path.join(xdir, f"{ty}.bin")
                 if os.path.exists(out_path) and os.path.getsize(out_path) == TILE_PX * TILE_PX * 2:
                     continue
-                url = f"{TILE_SERVER}/{z}/{tx}/{ty}.png"
+                url = f"{tile_server}/{z}/{tx}/{ty}.png"
                 try:
                     resp = session.get(url, timeout=20)
                     resp.raise_for_status()

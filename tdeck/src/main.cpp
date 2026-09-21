@@ -137,6 +137,15 @@ static void drawTitle(const char *title) {
   gfx->setTextSize(1);
 }
 
+static int itemY(int i, int n) {
+  int h = (n > 4) ? 34 : (SCREEN_H - 44) / n;
+  return 34 + i * h;
+}
+
+static int itemH(int n) {
+  return (n > 4) ? 30 : (SCREEN_H - 44) / n - 4;
+}
+
 static void drawStatus(const char *msg) {
   gfx->setTextSize(1);
   gfx->setTextColor(RGB565(255, 255, 0), BLACK);
@@ -145,6 +154,47 @@ static void drawStatus(const char *msg) {
   gfx->setCursor(4, SCREEN_H - 10);
   gfx->print(msg);
   gfx->setTextColor(WHITE, BLACK);
+}
+
+static void drawMenuList(const char *title, const char *const *items, int n, int sel, const char *status) {
+  static int lastSel = -1;
+  static const char *lastTitle = NULL;
+  if (title != lastTitle || lastSel < 0) {
+    drawTitle(title);
+    lastTitle = title;
+    lastSel = -1;
+    for (int i = 0; i < n; i++) {
+      int y = itemY(i, n);
+      if (i == sel) {
+        gfx->fillRect(0, y - 4, SCREEN_W, itemH(n), RGB565(0, 120, 255));
+        gfx->setTextColor(BLACK, RGB565(0, 120, 255));
+      } else {
+        gfx->setTextColor(WHITE, BLACK);
+      }
+      gfx->setTextSize(2);
+      gfx->setCursor(8, y);
+      gfx->println(items[i]);
+    }
+    if (status) {
+      gfx->setTextSize(1);
+      gfx->setTextColor(WHITE, BLACK);
+      gfx->setCursor(4, SCREEN_H - 10);
+      gfx->println(status);
+    }
+  } else if (sel != lastSel) {
+    int yPrev = itemY(lastSel, n);
+    int yNew = itemY(sel, n);
+    gfx->fillRect(0, yPrev - 4, SCREEN_W, itemH(n), BLACK);
+    gfx->setTextSize(2);
+    gfx->setTextColor(WHITE, BLACK);
+    gfx->setCursor(8, yPrev);
+    gfx->println(items[lastSel]);
+    gfx->fillRect(0, yNew - 4, SCREEN_W, itemH(n), RGB565(0, 120, 255));
+    gfx->setTextColor(BLACK, RGB565(0, 120, 255));
+    gfx->setCursor(8, yNew);
+    gfx->println(items[sel]);
+  }
+  lastSel = sel;
 }
 
 // ---------- SD ----------
@@ -183,45 +233,57 @@ static int pickFile(const char *title, const char *dir, const char *ext, String 
   String names[MAX_FILES];
   int count = 0;
   listFiles(dir, names, count, ext);
+  const int visible = 14;
   int sel = 0;
   int scroll = 0;
-  const int visible = 14;
+  bool needsRedraw = true;
   while (true) {
-    drawTitle(title);
-    if (count == 0) {
+    if (needsRedraw) {
+      drawTitle(title);
       gfx->setTextSize(1);
-      gfx->setCursor(8, 34);
-      gfx->println("No files found.");
-    }
-    int maxScroll = count > visible ? count - visible : 0;
-    if (scroll > maxScroll) scroll = maxScroll;
-    if (scroll < 0) scroll = 0;
-    for (int i = 0; i < visible && scroll + i < count; i++) {
-      int y = 30 + i * 14;
-      gfx->setTextSize(1);
-      if (scroll + i == sel) {
-        gfx->fillRect(0, y - 2, SCREEN_W, 13, RGB565(0, 120, 255));
-        gfx->setTextColor(BLACK, RGB565(0, 120, 255));
-      } else {
+      if (count == 0) {
         gfx->setTextColor(WHITE, BLACK);
+        gfx->setCursor(8, 34);
+        gfx->println("No files found.");
+        gfx->setCursor(8, 50);
+        gfx->println("Select/trackball-click = back");
       }
-      gfx->setCursor(6, y);
-      gfx->println(baseName(names[scroll + i]));
+      int maxScroll = count > visible ? count - visible : 0;
+      if (scroll > maxScroll) scroll = maxScroll;
+      if (scroll < 0) scroll = 0;
+      for (int i = 0; i < visible && scroll + i < count; i++) {
+        int y = 30 + i * 14;
+        if (scroll + i == sel) {
+          gfx->fillRect(0, y - 2, SCREEN_W, 13, RGB565(0, 120, 255));
+          gfx->setTextColor(BLACK, RGB565(0, 120, 255));
+        } else {
+          gfx->setTextColor(WHITE, BLACK);
+        }
+        gfx->setCursor(6, y);
+        gfx->println(baseName(names[scroll + i]));
+      }
+      gfx->setTextColor(WHITE, BLACK);
+      gfx->setCursor(4, SCREEN_H - 10);
+      gfx->println("Click = open  |  Left arrow = back");
+      needsRedraw = false;
     }
-    gfx->setTextColor(WHITE, BLACK);
     InputEvent e;
     if (!getInput(e, 50)) continue;
-    if (e.ev == EV_UP && sel > 0) sel--;
-    else if (e.ev == EV_DOWN && sel < count - 1) sel++;
+    if (e.ev == EV_UP && sel > 0) { sel--; needsRedraw = true; }
+    else if (e.ev == EV_DOWN && sel < count - 1) { sel++; needsRedraw = true; }
     else if (e.ev == EV_SELECT) {
       if (count == 0) return -1;
       outPath = names[sel];
       return sel;
-    } else if (e.ev == EV_BACK) return -1;
-    else if (e.ev == EV_LEFT) scroll = (scroll > 0) ? scroll - visible : 0;
-    else if (e.ev == EV_RIGHT) scroll = (scroll + visible < count) ? scroll + visible : maxScroll;
-    if (sel < scroll) scroll = sel;
-    if (sel >= scroll + visible) scroll = sel - visible + 1;
+    } else if (e.ev == EV_BACK || e.ev == EV_LEFT) return -1;
+    else if (e.ev == EV_RIGHT) {
+      int maxScroll = count > visible ? count - visible : 0;
+      scroll = (scroll + visible < count) ? scroll + visible : maxScroll;
+      sel = scroll;
+      needsRedraw = true;
+    }
+    if (sel < scroll) { scroll = sel; needsRedraw = true; }
+    if (sel >= scroll + visible) { scroll = sel - visible + 1; needsRedraw = true; }
   }
 }
 
@@ -241,25 +303,37 @@ static int textEditor(const String &path, char *buf, size_t bufSize, bool isNew)
   int scroll = 0;
   const int visibleChars = 50;
   const int visibleLines = 14;
+  bool needsRedraw = true;
+  uint16_t redrawHash = 0;
   while (true) {
-    drawTitle(baseName(path).c_str());
-    gfx->setTextSize(1);
-    int lineStarts[40];
-    int nLines = 1;
-    lineStarts[0] = 0;
-    for (size_t i = 0; i < len && nLines < 40; i++) {
-      if (buf[i] == '\n') lineStarts[nLines++] = i + 1;
-    }
-    if (scroll >= nLines) scroll = nLines - 1;
+    uint16_t curLine = 0;
+    for (size_t i = 0; i < cursor && i < len; i++) if (buf[i] == '\n') curLine++;
+    if (curLine < scroll) scroll = curLine;
+    if (curLine >= scroll + visibleLines) scroll = curLine - visibleLines + 1;
     if (scroll < 0) scroll = 0;
-    for (int i = 0; i < visibleLines && scroll + i < nLines; i++) {
-      int start = lineStarts[scroll + i];
-      int end = (scroll + i + 1 < nLines) ? lineStarts[scroll + i + 1] - 1 : len;
-      if (end - start > visibleChars) end = start + visibleChars;
-      gfx->setCursor(6, 30 + i * 14);
-      for (int j = start; j < end; j++) gfx->print(buf[j]);
+    uint16_t hash = (uint16_t)((len & 0xFF) ^ (scroll << 8) ^ (cursor & 0xFF));
+    if (needsRedraw || hash != redrawHash) {
+      redrawHash = hash;
+      needsRedraw = false;
+      drawTitle(baseName(path).c_str());
+      gfx->setTextSize(1);
+      int lineStarts[40];
+      int nLines = 1;
+      lineStarts[0] = 0;
+      for (size_t i = 0; i < len && nLines < 40; i++) {
+        if (buf[i] == '\n') lineStarts[nLines++] = i + 1;
+      }
+      if (scroll >= nLines) scroll = nLines - 1;
+      for (int i = 0; i < visibleLines && scroll + i < nLines; i++) {
+        int start = lineStarts[scroll + i];
+        int end = (scroll + i + 1 < nLines) ? lineStarts[scroll + i + 1] - 1 : len;
+        if (end - start > visibleChars) end = start + visibleChars;
+        gfx->setCursor(6, 30 + i * 14);
+        gfx->setTextColor(WHITE, BLACK);
+        for (int j = start; j < end; j++) gfx->print(buf[j]);
+      }
+      drawStatus("Enter=save  Backspace=del  Left=exit");
     }
-    drawStatus("Enter=save  Esc=cancel");
     InputEvent e;
     if (!getInput(e, 50)) continue;
     switch (e.ev) {
@@ -269,6 +343,7 @@ static int textEditor(const String &path, char *buf, size_t bufSize, bool isNew)
           buf[cursor++] = e.ch;
           len++;
           buf[len] = '\0';
+          needsRedraw = true;
         }
         break;
       case EV_SPACE: break;
@@ -278,9 +353,13 @@ static int textEditor(const String &path, char *buf, size_t bufSize, bool isNew)
           cursor--;
           len--;
           buf[len] = '\0';
+          needsRedraw = true;
         }
         break;
-      case EV_LEFT: if (cursor > 0) cursor--; break;
+      case EV_LEFT:
+        if (cursor > 0) cursor--;
+        else return -1;
+        break;
       case EV_RIGHT: if (cursor < (int)len) cursor++; break;
       case EV_UP: while (cursor > 0 && buf[cursor - 1] != '\n') cursor--; if (cursor > 0) cursor--; break;
       case EV_DOWN: while (cursor < (int)len && buf[cursor] != '\n') cursor++; if (cursor < (int)len) cursor++; break;
@@ -296,37 +375,21 @@ static int textEditor(const String &path, char *buf, size_t bufSize, bool isNew)
       case EV_BACK: return -1;
       default: break;
     }
-    int curLine = 0;
-    for (size_t i = 0; i < cursor && i < len; i++) if (buf[i] == '\n') curLine++;
-    if (curLine < scroll) scroll = curLine;
-    if (curLine >= scroll + visibleLines) scroll = curLine - visibleLines + 1;
   }
 }
 
 static void notesApp() {
-  const char *items[] = {"New note", "Open note", "Delete note"};
+  const char *items[] = {"New note", "Open note", "Delete note", "Back"};
   int sel = 0;
   while (true) {
-    drawTitle("Notes");
-    for (int i = 0; i < 3; i++) {
-      int y = 40 + i * 20;
-      if (i == sel) {
-        gfx->fillRect(0, y - 4, SCREEN_W, 18, RGB565(0, 120, 255));
-        gfx->setTextColor(BLACK, RGB565(0, 120, 255));
-      } else {
-        gfx->setTextColor(WHITE, BLACK);
-      }
-      gfx->setTextSize(2);
-      gfx->setCursor(8, y);
-      gfx->println(items[i]);
-    }
-    gfx->setTextColor(WHITE, BLACK);
+    drawMenuList("Notes", items, 4, sel, NULL);
     InputEvent e;
     if (!getInput(e, 50)) continue;
-    if (e.ev == EV_UP) sel = (sel + 2) % 3;
-    else if (e.ev == EV_DOWN) sel = (sel + 1) % 3;
-    else if (e.ev == EV_BACK) return;
+    if (e.ev == EV_UP) sel = (sel + 3) % 4;
+    else if (e.ev == EV_DOWN) sel = (sel + 1) % 4;
+    else if (e.ev == EV_BACK || (e.ev == EV_LEFT)) return;
     else if (e.ev == EV_SELECT) {
+      if (sel == 3) return;
       if (sel == 0) {
         String names[MAX_FILES];
         int count = 0;
@@ -373,7 +436,7 @@ static bool micSetup() {
   uint32_t ret = ESP_OK;
   ret |= es7210_adc_init(&Wire, &cfg);
   ret |= es7210_adc_config_i2s(cfg.codec_mode, &cfg.i2s_iface);
-  ret |= es7210_adc_set_gain((es7210_input_mics_t)(ES7210_INPUT_MIC1 | ES7210_INPUT_MIC2), (es7210_gain_value_t)GAIN_6DB);
+  ret |= es7210_adc_set_gain((es7210_input_mics_t)(ES7210_INPUT_MIC1 | ES7210_INPUT_MIC2), (es7210_gain_value_t)GAIN_30DB);
   ret |= es7210_adc_ctrl_state(cfg.codec_mode, AUDIO_HAL_CTRL_START);
   if (ret != ESP_OK) return false;
 
@@ -424,12 +487,15 @@ static void recorderApp() {
   drawTitle("Recorder");
   gfx->setTextSize(2);
   gfx->setCursor(8, 40);
-  gfx->println("Select = start REC");
+  gfx->println("Click/Enter = start REC");
   gfx->setCursor(8, 60);
-  gfx->println("Back/Esc = stop+save");
+  gfx->println("Left arrow = back");
   drawStatus("Ready");
   InputEvent e;
-  if (!getInput(e, portMAX_DELAY) || e.ev != EV_SELECT) return;
+  while (getInput(e, portMAX_DELAY)) {
+    if (e.ev == EV_SELECT) break;
+    if (e.ev == EV_BACK || e.ev == EV_LEFT) return;
+  }
 
   String names[MAX_FILES];
   int count = 0;
@@ -467,11 +533,16 @@ static void recorderApp() {
   while (!stop) {
     i2s_read(MIC_I2S_PORT, (char *)audioBuf, bufSamples * sizeof(int16_t), &bytesRead, portMAX_DELAY);
     int samples = bytesRead / 2;
-    for (int i = 0; i < samples; i++) audioBuf[i] = audioBuf[i] >> 2;
+    int32_t peak = 1;
+    for (int i = 0; i < samples; i++) {
+      int32_t v = audioBuf[i];
+      if (v < 0) v = -v;
+      if (v > peak) peak = v;
+    }
     f.write((uint8_t *)audioBuf, bytesRead);
     totalSamples += samples;
     while (xQueueReceive(inputQueue, &e, 0) == pdTRUE) {
-      if (e.ev == EV_BACK || e.ev == EV_SELECT) { stop = true; }
+      if (e.ev == EV_BACK || e.ev == EV_SELECT || e.ev == EV_LEFT) { stop = true; }
     }
     uint32_t secs = (millis() - recStart) / 1000;
     gfx->setTextSize(2);
@@ -479,7 +550,15 @@ static void recorderApp() {
     gfx->printf("%02u:%02u\n", (unsigned)(secs / 60), (unsigned)(secs % 60));
     gfx->setTextSize(1);
     gfx->setCursor(8, 100);
-    gfx->printf("samples: %u\n", (unsigned)totalSamples);
+    gfx->printf("samples: %u  peak: %d\n", (unsigned)totalSamples, (int)peak);
+    gfx->setCursor(8, 114);
+    int bars = (peak * 40) / 32768;
+    if (bars > 40) bars = 40;
+    gfx->print("[");
+    for (int i = 0; i < 40; i++) gfx->print(i < bars ? "#" : " ");
+    gfx->println("]");
+    gfx->setCursor(8, 128);
+    gfx->println("Click/Esc = stop & save");
   }
   f.flush();
   uint32_t dataBytes = totalSamples * 2;
@@ -556,23 +635,7 @@ static void mainMenu() {
   const char *items[] = {"Notes", "Recorder", "Play recordings"};
   int sel = 0;
   while (true) {
-    drawTitle("T-Deck Plus");
-    for (int i = 0; i < 3; i++) {
-      int y = 40 + i * 24;
-      if (i == sel) {
-        gfx->fillRect(0, y - 4, SCREEN_W, 22, RGB565(0, 120, 255));
-        gfx->setTextColor(BLACK, RGB565(0, 120, 255));
-      } else {
-        gfx->setTextColor(WHITE, BLACK);
-      }
-      gfx->setTextSize(2);
-      gfx->setCursor(8, y);
-      gfx->println(items[i]);
-    }
-    gfx->setTextColor(WHITE, BLACK);
-    gfx->setTextSize(1);
-    gfx->setCursor(4, SCREEN_H - 24);
-    gfx->println(sdOk ? "SD OK" : "NO SD CARD!");
+    drawMenuList("T-Deck Plus", items, 3, sel, sdOk ? "SD OK" : "NO SD CARD!");
     InputEvent e;
     if (!getInput(e, 50)) continue;
     if (e.ev == EV_UP) sel = (sel + 2) % 3;

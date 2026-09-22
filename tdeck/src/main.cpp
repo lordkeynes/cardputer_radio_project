@@ -1494,6 +1494,7 @@ void setup() {
   sdOk = sdInit();
   Serial.printf("[boot] SD: %s\n", sdOk ? "OK" : "FAIL");
   themeInit();   // load saved theme (needs SD mounted)
+  settingsSleepMs();  // eager-load sleep timeout here too (same reason)
   if (sdOk) {
     Serial.printf("[boot] SD type: %s, size: %lu MB\n",
                   SD.cardType() == CARD_SDHC ? "SDHC" : SD.cardType() == CARD_SD ? "SDSC" : "?",
@@ -1506,6 +1507,11 @@ void setup() {
   drawStatus(sdOk ? "SD OK" : "No SD card");
   delay(600);
 
+  gfx->fillRect(0, 34, SCREEN_W, 14, BLACK);
+  gfx->setTextSize(1);
+  gfx->setTextColor(TERM_BRIGHT, BLACK);
+  gfx->setCursor(8, 40);
+  gfx->println("Starting mic + GPS...");
   Serial.printf("[boot] mic init: %s\n", micSetup() ? "OK" : "FAIL");
   gpsSetup();
   Serial.println("[boot] GPS serial started (9600, RX=44 TX=43)");
@@ -1513,6 +1519,9 @@ void setup() {
   Serial.printf("[boot] GPS: %lu NMEA bytes in first 3s (0 = check antenna/module)\n",
                 (unsigned long)gpsCharsSeen);
   Serial.printf("[boot] battery: %d%% (%d mV)\n", batteryPercent(), batteryMillivolts());
+  gfx->fillRect(0, 34, SCREEN_W, 14, BLACK);
+  gfx->setCursor(8, 40);
+  gfx->println("Connecting WiFi...");
   if (wifiAutoConnect()) {
     Serial.println("[boot] WiFi connected");
   } else {

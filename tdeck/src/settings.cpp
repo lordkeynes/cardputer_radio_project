@@ -17,9 +17,11 @@ static void sleepSave(unsigned long ms) {
 }
 
 unsigned long settingsSleepMs() {
-  static unsigned long cached = 0;
+  static unsigned long cached = 45000UL;
   static bool loaded = false;
   if (!loaded) {
+    // Load once, called from setup() AFTER SD init so we never touch the
+    // SD/SPI bus from a task while another task is using it.
     loaded = true;
     cached = 45000UL;
     if (sdOk && SD.exists("/config/sleep.txt")) {

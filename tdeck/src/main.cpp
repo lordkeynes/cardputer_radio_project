@@ -11,6 +11,7 @@
 #include <Arduino_GFX_Library.h>
 #include <TinyGPS++.h>
 #include "es7210.h"
+#include <WiFi.h>
 #include "utilities.h"
 #include "mapapp.h"
 #include "pda.h"
@@ -239,7 +240,7 @@ static void uiInit() {
 static void drawTitleBarIndicators() {
   gfx->setTextSize(1);
   int x = SCREEN_W - 4;
-  // Battery percent
+  // Battery: icon (outline + fill proportional) + percent
   int pct = batteryPercent();
   uint16_t battColor = pct > 50 ? TERM_GREEN : pct > 20 ? TERM_ACCENT : TERM_RED;
   char b[8];
@@ -248,14 +249,21 @@ static void drawTitleBarIndicators() {
   gfx->setTextColor(battColor, BLACK);
   gfx->setCursor(x, 6);
   gfx->print(b);
-  x -= 10;  // gap
-  // WiFi indicator
+  x -= 3;   // gap to icon
+  gfx->drawRect(x - 14, 5, 12, 8, TERM_DIM);
+  gfx->fillRect(x - 13, 6, (10 * pct) / 100 + ((pct > 0) ? 1 : 0), 6, battColor);
+  gfx->fillRect(x - 2, 7, 2, 4, TERM_DIM);
+  x -= 18;
+  // WiFi: signal-strength bars (3 bars, tallest when strong)
   if (wifiConnected()) {
-    x -= 12;
-    gfx->setTextColor(TERM_CYAN, BLACK);
-    gfx->setCursor(x, 6);
-    gfx->print("~");
-    gfx->print("~");
+    int rssi = WiFi.RSSI();
+    int bars = rssi >= -55 ? 4 : rssi >= -67 ? 3 : rssi >= -78 ? 2 : 1;
+    for (int i = 0; i < 4; i++) {
+      int h = 2 + i * 3;
+      gfx->drawFastVLine(x - 4 - i * 4, 13 - h, h,
+                         i < bars ? TERM_CYAN : RGB565(40, 40, 40));
+    }
+    x -= 20;
   }
 }
 static void drawTitle(const char *title) {

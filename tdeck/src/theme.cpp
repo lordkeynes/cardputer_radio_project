@@ -58,6 +58,33 @@ static const Theme themes[] = {
    RGB565(255, 220, 120),
    RGB565(255, 80, 80),
    RGB565(80, 220, 255)},
+  // 5: AmberMono - full amber monochrome, softer dim, warm accents
+  {"AmberMono",
+   RGB565(255, 176, 0),
+   RGB565(255, 232, 160),
+   RGB565(128, 86, 0),
+   RGB565(150, 100, 0),
+   RGB565(255, 214, 90),
+   RGB565(255, 60, 60),
+   RGB565(214, 150, 0)},
+  // 6: GreenVGA - softer VGA text green, calmer than phosphor
+  {"GreenVGA",
+   RGB565(85, 255, 85),
+   RGB565(175, 255, 175),
+   RGB565(42, 168, 42),
+   RGB565(8, 96, 8),
+   RGB565(175, 255, 175),
+   RGB565(210, 80, 80),
+   RGB565(85, 255, 255)},
+  // 7: RetroBeige - 8-bit micro cream text, orange accent
+  {"RetroBeige",
+   RGB565(227, 218, 190),
+   RGB565(255, 250, 235),
+   RGB565(150, 141, 116),
+   RGB565(88, 80, 58),
+   RGB565(255, 140, 0),
+   RGB565(255, 80, 80),
+   RGB565(255, 175, 0)},
 };
 static const int N_THEMES = sizeof(themes) / sizeof(themes[0]);
 

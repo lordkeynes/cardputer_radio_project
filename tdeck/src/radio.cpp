@@ -159,20 +159,20 @@ static void radioLoadStations() {
 
 static bool radioAudioInit() {
   if (radioInited) return true;
-  audio = new Audio(false, 3, I2S_NUM_0);
-  if (!audio) return false;
-  audio->setPinout(BOARD_I2S_BCK, BOARD_I2S_WS, BOARD_I2S_DOUT);
+  if (!audio) {
+    audio = new Audio(false, 3, I2S_NUM_0);
+    if (!audio) return false;
+    audio->setPinout(BOARD_I2S_BCK, BOARD_I2S_WS, BOARD_I2S_DOUT);
+  }
   audio->setVolume(volume);
   radioInited = true;
   return true;
 }
 
 static void radioAudioDeinit() {
-  if (audio) {
-    audio->stopSong();
-    delete audio;
-    audio = NULL;
-  }
+  // keep the Audio object alive: the lib's destructor never stops its
+  // internal decode task, so deleting it mid-task crashes the system
+  if (audio) audio->stopSong();
   WiFi.setSleep(true);    // back to power saving when not streaming
   radioInited = false;
   isPlaying = false;

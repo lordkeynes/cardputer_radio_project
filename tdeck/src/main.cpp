@@ -35,11 +35,9 @@ static bool audioPlayerInit() {
 }
 static Audio *audioPlayerGet() { return sharedAudioPlayer; }
 static void audioPlayerDeinit() {
-  if (sharedAudioPlayer) {
-    sharedAudioPlayer->stopSong();
-    delete sharedAudioPlayer;
-    sharedAudioPlayer = NULL;
-  }
+  // keep the object alive: deleting it stops nothing and its internal
+  // decode task would keep running on freed memory -> crash
+  if (sharedAudioPlayer) sharedAudioPlayer->stopSong();
 }
 static int audioPlayerDefaultVolume() { return 12; }
 
@@ -1392,7 +1390,7 @@ struct Category {
   int n;
 };
 
-static const int catProductivity[] = {0, 5, -2, 20};
+static const int catProductivity[] = {0, 5, 3, -2, 20};
 
 static const int catTools[]         = {8, 9, 10, 11, 12};
 static const int catMedia[]         = {13, 14, 1, 2, 21};
@@ -1407,7 +1405,7 @@ static void runTerminal() { terminalApp(); }
 #define CAT_SPORTS -100
 #define CAT_RADIO  -101
 static const Category categories[] = {
-  {"Work",     catProductivity, 4},
+  {"Work",     catProductivity, 5},
   {"Tools",    catTools,        5},
   {"Media",    catMedia,        5},
   {"Network",  catNetwork,      3},

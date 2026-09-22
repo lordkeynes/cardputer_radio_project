@@ -272,7 +272,7 @@ static void drawTitleBarIndicators() {
   gfx->print(b);
   x -= 3;   // gap to icon
   gfx->drawRect(x - 14, 5, 12, 8, TERM_DIM);
-  gfx->fillRect(x - 13, 6, (10 * pct) / 100 + ((pct > 0) ? 1 : 0), 6, battColor);
+  gfx->fillRect(x - 13, 6, (10 * pct + 99) / 100, 6, battColor);   // 1..10px, fits the 10px interior
   gfx->fillRect(x - 2, 7, 2, 4, TERM_DIM);
   x -= 18;
   // WiFi: signal-strength bars (3 bars, tallest when strong)
@@ -323,7 +323,11 @@ static void drawStatus(const char *msg) {
   gfx->setCursor(4, SCREEN_H - 10);
   gfx->print("                               ");
   gfx->setCursor(4, SCREEN_H - 10);
-  gfx->print(msg);
+  int maxChars = (SCREEN_W - 8) / 6;
+  char tmp[64];
+  strlcpy(tmp, msg, sizeof(tmp));
+  if ((int)strlen(tmp) > maxChars) tmp[maxChars] = 0;
+  gfx->print(tmp);
   gfx->setTextColor(WHITE, BLACK);
 }
 
@@ -742,22 +746,26 @@ static int textEditor(const String &path, char *buf, size_t bufSize, bool isNew)
       needsRedraw = false;
       drawTitle(baseName(path).c_str());
       gfx->setTextSize(1);
-      int lineStarts[40];
-      int nLines = 1;
-      lineStarts[0] = 0;
-      for (size_t i = 0; i < len && nLines < 40; i++) {
-        if (buf[i] == '\n') lineStarts[nLines++] = i + 1;
+      // find the byte offset of the scroll-th line, then render only the
+      // visible window (no fixed line-count cap, so long notes render fully)
+      int totalLines = 1;
+      for (size_t i = 0; i < len; i++) if (buf[i] == '\n') totalLines++;
+      if (scroll >= totalLines) scroll = totalLines - 1;
+      size_t start = 0;
+      int lineNo = 0;
+      while (lineNo < scroll && start < len) {
+        if (buf[start] == '\n') lineNo++;
+        start++;
       }
-      if (scroll >= nLines) scroll = nLines - 1;
-      for (int i = 0; i < visibleLines && scroll + i < nLines; i++) {
-        int start = lineStarts[scroll + i];
-        int end = (scroll + i + 1 < nLines) ? lineStarts[scroll + i + 1] - 1 : len;
-        if (end - start > visibleChars) end = start + visibleChars;
+      for (int i = 0; i < visibleLines; i++) {
+        size_t end = start;
+        while (end < len && buf[end] != '\n') end++;
+        if (end - start > (size_t)visibleChars) end = start + visibleChars;
         gfx->setCursor(6, 30 + i * 14);
         gfx->setTextColor(WHITE, BLACK);
         // simple inline markup: *bold* -> bright, _italic_ -> cyan, ~dim~ -> dim
         char openMark = 0;
-        for (int j = start; j < end; j++) {
+        for (size_t j = start; j < end; j++) {
           char c = buf[j];
           if (c == '*' || c == '_' || c == '~') {
             if (openMark == 0) {
@@ -774,7 +782,7 @@ static int textEditor(const String &path, char *buf, size_t bufSize, bool isNew)
           gfx->print(c);
         }
       }
-      drawStatus("Click=save  Enter=newline  Bksp=del  Long-click=exit  *b* _i_ ~d~");
+      drawStatus("Click=save Ent=newline Bksp=del Long=exit *b* _i_ ~d~");
     }
     InputEvent e;
     if (!getInput(e, 50)) continue;
@@ -849,13 +857,17 @@ static void notesApp() {
         listFiles(NOTE_DIR, names, count, ".txt");
         int idx = 1;
         String path;
+        bool found = false;
         do {
           path = String(NOTE_DIR) + "/note" + String(idx) + ".txt";
           bool exists = false;
           for (int i = 0; i < count; i++) if (names[i] == path) { exists = true; break; }
-          if (!exists) break;
+          if (!exists) { found = true; break; }
           idx++;
         } while (idx < 999);
+        if (!found) {   // all 999 slots taken: fall back to a timestamped name
+          path = String(NOTE_DIR) + "/note_" + String(millis()) + ".txt";
+        }
         textEditor(path, noteBuf, MAX_NOTE_SIZE, true);
       } else if (sel == 1) {
         String path;
@@ -865,7 +877,19 @@ static void notesApp() {
       } else if (sel == 2) {
         String path;
         if (pickFile("Delete note", NOTE_DIR, ".txt", path) >= 0) {
-          SD.remove(path);
+          drawStatus("Delete this note? y/N ");
+          InputEvent c;
+          bool confirmed = false, answered = false;
+          unsigned long t0 = millis();
+          while (!answered && millis() - t0 < 8000) {
+            if (getInput(c, 100)) {
+              if (c.ev == EV_CHAR && (c.ch == 'y' || c.ch == 'Y')) confirmed = true;
+              if (c.ev == EV_CHAR || c.ev == EV_SELECT ||
+                  c.ev == EV_NEWLINE || c.ev == EV_BACK) answered = true;
+            }
+          }
+          if (confirmed) SD.remove(path);
+          uiScreenChanged();
         }
       } else if (sel == 3) {
         todoApp();
@@ -954,7 +978,10 @@ void spkBeep(int ms) {
   pins.ws_io_num = BOARD_I2S_WS;
   pins.data_out_num = BOARD_I2S_DOUT;
   pins.data_in_num = I2S_PIN_NO_CHANGE;
-  if (i2s_driver_install(SPK_I2S_PORT, &i2s_config, 0, NULL) != ESP_OK) return;
+  if (i2s_driver_install(SPK_I2S_PORT, &i2s_config, 0, NULL) != ESP_OK) {
+    Serial.println("[spk] beep skipped: speaker I2S port busy");
+    return;
+  }
   i2s_set_pin(SPK_I2S_PORT, &pins);
   i2s_zero_dma_buffer(SPK_I2S_PORT);
   // 880 Hz square wave
@@ -972,7 +999,14 @@ void spkBeep(int ms) {
   i2s_driver_uninstall(SPK_I2S_PORT);
 }
 
+static bool micOk = false;
+
 static void recorderApp() {
+  if (!micOk) {
+    drawStatus("Mic unavailable");
+    delay(1500);
+    return;
+  }
   // ---- idle screen with big record button ----
   drawTitle("Recorder");
   gfx->fillRect(0, 26, SCREEN_W, SCREEN_H - 26 - 18, BLACK);
@@ -1005,13 +1039,17 @@ static void recorderApp() {
   listFiles(REC_DIR, names, count, ".wav");
   int idx = 1;
   String path;
+  bool found = false;
   do {
     path = String(REC_DIR) + "/rec" + String(idx) + ".wav";
     bool exists = false;
     for (int i = 0; i < count; i++) if (names[i] == path) { exists = true; break; }
-    if (!exists) break;
+    if (!exists) { found = true; break; }
     idx++;
   } while (idx < 999);
+  if (!found) {   // all 999 slots taken: fall back to a timestamped name
+    path = String(REC_DIR) + "/rec_" + String(millis()) + ".wav";
+  }
   File f = SD.open(path, FILE_WRITE);
   if (!f) { drawStatus("SD write error"); delay(1500); return; }
   WavHeader hdr;
@@ -1061,6 +1099,7 @@ static void recorderApp() {
     }
     // elapsed time
     uint32_t secs = (millis() - recStart) / 1000;
+    if (secs > 359999) secs = 359999;   // clamp so the %02u:%02u field can't overflow
     gfx->setTextSize(3);
     gfx->setTextColor(TERM_BRIGHT, BLACK);
     gfx->setCursor(90, 44);
@@ -1291,9 +1330,8 @@ static void batteryScreen() {
   gfx->setTextColor(WHITE, BLACK);
   gfx->print("SEL=charge mode  any key=back");
   InputEvent w;
-  while (!getInput(w, 50)) {
-    if (w.ev == EV_SELECT || w.ev == EV_NEWLINE) chargeMode();
-  }
+  while (!getInput(w, 50)) { /* wait for a key */ }
+  if (w.ev == EV_SELECT || w.ev == EV_NEWLINE) chargeMode();
 }
 
 // Charge mode: minimal power draw for faster charging. Screen off, keyboard
@@ -1722,6 +1760,7 @@ static void runGridPage(const char *title, const int *apps, int n) {
     InputEvent e;
     if (!getInput(e, 50)) continue;
     int cols = LAUNCHER_COLS;
+    if (n < cols) cols = n;   // small pages wrap correctly too
     if (e.ev == EV_UP) sel = (sel + n - cols) % n;
     else if (e.ev == EV_DOWN) sel = (sel + cols) % n;
     else if (e.ev == EV_LEFT) sel = (sel + n - 1) % n;
@@ -1819,24 +1858,28 @@ void setup() {
                   (unsigned long)(SD.cardSize() / (1024UL * 1024UL)));
   }
 
-  xTaskCreatePinnedToCore(keyboardTask, "kb", 4096, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(trackballTask, "tb", 2048, NULL, 1, NULL, 0);
-
-  drawStatus(sdOk ? "SD OK" : "No SD card");
-  delay(600);
-
+  // Init the mic codec on the Wire bus BEFORE the keyboard task starts so
+  // the two never touch the I2C bus from different cores at the same time.
   gfx->fillRect(0, 34, SCREEN_W, 14, BLACK);
   gfx->setTextSize(1);
   gfx->setTextColor(TERM_BRIGHT, BLACK);
   gfx->setCursor(8, 40);
   gfx->println("Starting mic + GPS...");
-  Serial.printf("[boot] mic init: %s\n", micSetup() ? "OK" : "FAIL");
+  micOk = micSetup();
+  Serial.printf("[boot] mic init: %s\n", micOk ? "OK" : "FAIL");
   gpsSetup();
   Serial.println("[boot] GPS serial started (9600, RX=44 TX=43)");
   for (int i = 0; i < 30; i++) { gpsPoll(); delay(100); }
   Serial.printf("[boot] GPS: %lu NMEA bytes in first 3s (0 = check antenna/module)\n",
                 (unsigned long)gpsCharsSeen);
   Serial.printf("[boot] battery: %d%% (%d mV)\n", batteryPercent(), batteryMillivolts());
+
+  xTaskCreatePinnedToCore(keyboardTask, "kb", 4096, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(trackballTask, "tb", 2048, NULL, 1, NULL, 0);
+
+  drawStatus(sdOk ? "SD OK" : "No SD card");
+  delay(600);
+
   gfx->fillRect(0, 34, SCREEN_W, 14, BLACK);
   gfx->setCursor(8, 40);
   gfx->println("Connecting WiFi...");

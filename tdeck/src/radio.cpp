@@ -46,7 +46,8 @@ static bool radioInited = false;
 // ---- stream recording (tee of decoded PCM -> WAV on SD) ----
 #define RADIO_REC_DIR "/radio/rec"
 static File recFile;
-static bool recActive = false;
+static volatile bool recActive = false;
+static SemaphoreHandle_t recMutex = NULL;
 static uint32_t recBytes = 0;
 static uint32_t recSampleRate = 16000;
 static uint32_t recChannels = 1;
@@ -73,7 +74,9 @@ static void radioRecWriteHeader(File &f, uint32_t dataLen, uint32_t rate, uint32
 }
 
 static bool radioRecStart() {
-  if (recActive) return true;
+  if (!recMutex) recMutex = xSemaphoreCreateMutex();
+  if (xSemaphoreTake(recMutex, pdMS_TO_TICKS(1000)) != pdTRUE) return false;
+  if (recActive) { xSemaphoreGive(recMutex); return true; }
   if (sdOk && !SD.exists(RADIO_REC_DIR)) SD.mkdir(RADIO_REC_DIR);
   char name[48];
   uint32_t n = 1;
@@ -89,16 +92,20 @@ static bool radioRecStart() {
   recFile.write(z, 44);
   recBytes = 0;
   recActive = true;
+  xSemaphoreGive(recMutex);
   return true;
 }
 
 static void radioRecStop() {
-  if (!recActive) return;
+  if (!recMutex) { recActive = false; return; }   // nothing started yet
+  if (xSemaphoreTake(recMutex, pdMS_TO_TICKS(1000)) != pdTRUE) return;
+  if (!recActive) { xSemaphoreGive(recMutex); return; }
   recActive = false;
   if (recFile) {
     radioRecWriteHeader(recFile, recBytes, recSampleRate, recChannels);
     recFile.close();
   }
+  xSemaphoreGive(recMutex);
 }
 
 // ESP32-audioI2S hook: tee decoded PCM to the record file while playing.
@@ -107,16 +114,24 @@ void audio_process_i2s(int16_t *outBuff, uint16_t validSamples,
   *continueI2S = true;
   if (!recActive || !recFile) return;
   if (bitsPerSample != 16) return;
+  if (!recMutex) return;
+  if (xSemaphoreTake(recMutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
+  if (!recActive || !recFile) { xSemaphoreGive(recMutex); return; }
   recSampleRate = audio ? audio->getSampleRate() : recSampleRate;
   recChannels = channels > 2 ? 2 : channels;
   if (recChannels == 0) recChannels = 1;
-  // keep up to ~10 MB per recording to protect the SD card
+  // keep up to ~10 MB per recording to protect the SD card; stop inline here
+  // because radioRecStop() also takes recMutex (would self-deadlock)
   if (recBytes + (uint32_t)validSamples * recChannels * 2 > 10 * 1024 * 1024) {
-    radioRecStop();
+    recActive = false;
+    radioRecWriteHeader(recFile, recBytes, recSampleRate, recChannels);
+    recFile.close();
+    xSemaphoreGive(recMutex);
     return;
   }
   size_t w = recFile.write((uint8_t *)outBuff, (size_t)validSamples * recChannels * 2);
   recBytes += w;
+  xSemaphoreGive(recMutex);
 }
 
 static const Station defaultStations[] = {
@@ -198,9 +213,15 @@ static bool radioTune(int idx) {
 
 // if the stream drops, try one silent re-tune of the same station
 static void radioTick() {
+  static uint32_t lastRetuneMs = 0;
+  static uint32_t retuneDelayMs = 5000;
   if (audio && isPlaying && !audio->isRunning()) {
+    uint32_t now = millis();
+    if (now - lastRetuneMs < retuneDelayMs) return;   // back off between retunes
+    lastRetuneMs = now;
     isPlaying = audio->connecttohost(stations[curStation].url.c_str());
-    if (isPlaying) audio->setVolume(volume);
+    if (isPlaying) { audio->setVolume(volume); retuneDelayMs = 5000; }
+    else retuneDelayMs = (retuneDelayMs < 60000) ? retuneDelayMs * 2 : retuneDelayMs;
   }
 }
 

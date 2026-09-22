@@ -128,8 +128,21 @@ void gsStatsScreen() {
     if (e.ev == PDA_EV_CHAR && (e.ch == 'r' || e.ch == 'R')) {
       for (int i = 0; i < GS_N; i++) { statsWins[i] = 0; statsLosses[i] = 0; statsHi[i] = 0; }
       gsSave();
-      gsStatsScreen();
-      return;
+      gfx->fillScreen(BLACK);
+      // re-enter the draw loop instead of recursing (stack-safe reset)
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(4, SCREEN_H - 10);
+      gfx->print("r = reset stats   Any key = back");
+      for (int i = 0; i < GS_N; i++) {
+        int cx = (i / colh) * 156;
+        int y = 38 + (i % colh) * 13;
+        gfx->setTextColor(TERM_BRIGHT, BLACK);
+        gfx->setCursor(8 + cx, y);
+        gfx->print(gsNames[i]);
+        gfx->setCursor(88 + cx, y);
+        gfx->printf("0-0");
+      }
+      continue;
     }
     return;
   }

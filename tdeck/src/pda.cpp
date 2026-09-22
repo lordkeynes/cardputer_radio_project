@@ -25,26 +25,26 @@ extern bool sdOk;
 #define BAT_FULL_MV 4200
 #define BAT_EMPTY_MV 3300
 
-int batteryPercent() {
-  // Average a few reads for stability
+static int batteryReadMv() {
+  // Average a few fast reads for stability (no delay() — this runs in the
+  // title bar of every screen)
   uint32_t sum = 0;
-  for (int i = 0; i < 8; i++) {
+  for (int i = 0; i < 4; i++) {
     sum += analogRead(BAT_ADC_PIN);
-    delay(2);
+    delayMicroseconds(200);
   }
-  int mv = (int)((sum / 8) / 4095.0 * BAT_VREF * BAT_DIVIDER * 1000);
+  return (int)((sum / 4) / 4095.0 * BAT_VREF * BAT_DIVIDER * 1000);
+}
+
+int batteryPercent() {
+  int mv = batteryReadMv();
   if (mv <= BAT_EMPTY_MV) return 0;
   if (mv >= BAT_FULL_MV) return 100;
   return (mv - BAT_EMPTY_MV) * 100 / (BAT_FULL_MV - BAT_EMPTY_MV);
 }
 
 int batteryMillivolts() {
-  uint32_t sum = 0;
-  for (int i = 0; i < 8; i++) {
-    sum += analogRead(BAT_ADC_PIN);
-    delay(2);
-  }
-  return (int)((sum / 8) / 4095.0 * BAT_VREF * BAT_DIVIDER * 1000);
+  return batteryReadMv();
 }
 
 // ---------- Screen sleep ----------
@@ -312,14 +312,7 @@ void clockApp() {
 // ---------- Calendar (month view) ----------
 void calendarApp() {
   static int viewYear = -1, viewMonth = -1;
-  if (viewYear < 0) {
-    time_t now = time(NULL);
-    struct tm lt;
-    localtime_r(&now, &lt);
-    viewYear = lt.tm_year + 1900;
-    viewMonth = lt.tm_mon + 1;
-  }
-  // Day cursor, initialized to today so trackball movement is always by day.
+  // Day cursor + view, initialized to today so trackball movement is by day.
   int selDay = 0;
   {
     time_t now = time(NULL);

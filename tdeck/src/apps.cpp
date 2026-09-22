@@ -404,7 +404,7 @@ void searchApp() {
                 String low = content; low.toLowerCase();
                 int at = 0;
                 while (nResults < 16) {
-                  at = low.indexOf(query, at);
+                  at = low.indexOf(q, at);
                   if (at < 0) break;
                   // extract line containing match
                   int ls = low.lastIndexOf('\n', at);
@@ -417,7 +417,7 @@ void searchApp() {
                   rFiles[nResults] = dirs[d] + "/" + name;
                   rLines[nResults] = line;
                   nResults++;
-                  at += query.length();
+                  at += q.length();
                 }
               } else f.close();
               f = root.openNextFile();
@@ -703,13 +703,20 @@ void convertApp() {
     switch (e.ev) {
       case PDA_EV_UP: cat = (cat + nCats - 1) % nCats; from = (cat == 2) ? 0 : 2; to = (cat == 2) ? 1 : 0; needsRedraw = true; break;
       case PDA_EV_DOWN: cat = (cat + 1) % nCats; from = (cat == 2) ? 0 : 2; to = (cat == 2) ? 1 : 0; needsRedraw = true; break;
-      case PDA_EV_LEFT: from = (from + 4) % 5; needsRedraw = true; break;
-      case PDA_EV_RIGHT: from = (from + 1) % 5; needsRedraw = true; break;
+      case PDA_EV_LEFT: { int nU = (cat == 2) ? 3 : 5; from = (from + nU - 1) % nU; if (cat == 2 && to == from) to = (to + 1) % 3; needsRedraw = true; } break;
+      case PDA_EV_RIGHT: { int nU = (cat == 2) ? 3 : 5; from = (from + 1) % nU; if (cat == 2 && to == from) to = (to + 1) % 3; needsRedraw = true; } break;
       case PDA_EV_CHAR: {
         if ((e.ch >= '0' && e.ch <= '9') || e.ch == '.') {
           if (input.length() < 12) { input += e.ch; needsRedraw = true; }
-        } else if (e.ch == 'f' || e.ch == 'F') { to = from; from = to; needsRedraw = true; }  // swap handled below
-        else if (e.ch == 't' || e.ch == 'T') { to = (to + 1) % 5; needsRedraw = true; }
+        } else if (e.ch == 'f' || e.ch == 'F') {
+          int tmp = from; from = to; to = tmp;   // swap from/to units
+          needsRedraw = true;
+        }
+        else if (e.ch == 't' || e.ch == 'T') {
+          int nUnits = (cat == 2) ? 3 : 5;   // Temp has only 3 units
+          do { to = (to + 1) % nUnits; } while (cat == 2 && to == from);
+          needsRedraw = true;
+        }
         break;
       }
       case PDA_EV_DELETE: if (input.length()) { input.remove(input.length()-1); needsRedraw = true; } break;
@@ -788,7 +795,21 @@ void filesApp() {
         } else if (e.ch == 'd' || e.ch == 'D') {
           if (sel < n && !isDir[sel]) {
             String full = path + (path.endsWith("/") ? "" : "/") + names[sel];
-            SD.remove(full);
+            // confirm before deleting
+            gfx->setTextColor(TERM_RED, BLACK);
+            gfx->setCursor(4, SCREEN_H - 22);
+            gfx->printf("Delete %s? y/N ", names[sel].c_str());
+            InputEventP c;
+            bool confirmed = false, answered = false;
+            unsigned long t0 = millis();
+            while (!answered && millis() - t0 < 8000) {
+              if (pdaGetInput(c, 100)) {
+                if (c.ev == PDA_EV_CHAR && (c.ch == 'y' || c.ch == 'Y')) confirmed = true;
+                if (c.ev == PDA_EV_CHAR || c.ev == PDA_EV_SELECT ||
+                    c.ev == PDA_EV_NEWLINE || c.ev == PDA_EV_BACK) answered = true;
+              }
+            }
+            if (confirmed) SD.remove(full);
             sel = 0; needsRedraw = true;
           }
         }

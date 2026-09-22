@@ -66,7 +66,12 @@ bool wifiAutoConnect() {
   WiFi.mode(WIFI_STA);
   WiFi.persistent(true);
   // Fast path: NVS already knows the last network; reconnect in seconds.
-  if (WiFi.begin() == WL_CONNECTED || WiFi.status() == WL_CONNECTED) {
+  WiFi.begin();
+  uint32_t fastStart = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - fastStart < 5000) {
+    delay(100);
+  }
+  if (WiFi.status() == WL_CONNECTED) {
     wifiUp = true;
     Serial.printf("[wifi] reconnected to %s (%s)\n",
                   WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
@@ -95,7 +100,8 @@ bool wifiAutoConnect() {
 bool wifiConnected() { return wifiUp && WiFi.status() == WL_CONNECTED; }
 
 // Simple text prompt at the bottom of the screen; returns entered string.
-bool promptText(const char *label, String &out) {
+// mask=true shows '*' for each character (for passwords).
+bool promptTextMasked(const char *label, String &out, bool mask) {
   out = "";
   gfx->fillRect(0, SCREEN_H - 40, SCREEN_W, 40, BLACK);
   gfx->setTextSize(1);
@@ -108,9 +114,9 @@ bool promptText(const char *label, String &out) {
     if (!pdaGetInput(e, 50)) continue;
     if (e.ev == PDA_EV_NEWLINE || e.ev == PDA_EV_SELECT) return out.length() > 0;
     if (e.ev == PDA_EV_SPACE) {
-      if (out.length() < 63) { out += ' '; gfx->print(' '); }
+      if (out.length() < 63) { out += ' '; gfx->print(mask ? '*' : ' '); }
     } else if (e.ev == PDA_EV_CHAR) {
-      if (out.length() < 63) { out += e.ch; gfx->print(e.ch); }
+      if (out.length() < 63) { out += e.ch; gfx->print(mask ? '*' : e.ch); }
     } else if (e.ev == PDA_EV_DELETE) {
       if (out.length() > 0) {
         out.remove(out.length() - 1);
@@ -120,6 +126,14 @@ bool promptText(const char *label, String &out) {
       return false;
     }
   }
+}
+
+bool promptText(const char *label, String &out) {
+  return promptTextMasked(label, out, false);
+}
+
+bool promptPassword(const char *label, String &out) {
+  return promptTextMasked(label, out, true);
 }
 
 void wifiApp() {
@@ -219,7 +233,7 @@ void wifiApp() {
           if (known[i].ssid == ssid) { pass = known[i].pass; haveKey = true; break; }
         }
         if (!haveKey) {
-          if (!promptText("Password", pass)) break;
+          if (!promptPassword("Password", pass)) break;
         }
         WiFi.mode(WIFI_STA);
         WiFi.begin(ssid.c_str(), pass.c_str());
@@ -261,6 +275,9 @@ void wifiApp() {
 // Channel spectrum view: 2.4 GHz channels 1-14 on the x axis, signal
 // strength on y. Each AP is a rounded bump; overlapping nets form ridges.
 void wifiBandsApp() {
+  bool rescan = true;
+  while (rescan) {
+  rescan = false;
   int n = WiFi.scanNetworks();
   const int N_CH = 14;
   int strongest[N_CH];
@@ -344,8 +361,9 @@ void wifiBandsApp() {
   while (true) {
     InputEventP e;
     if (!pdaGetInput(e, 50)) continue;
-    if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) { wifiBandsApp(); return; }
+    if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) { rescan = true; break; }
     if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) { WiFi.scanDelete(); return; }
+  }
   }
 }
 

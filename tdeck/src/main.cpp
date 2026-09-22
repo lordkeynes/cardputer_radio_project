@@ -1014,7 +1014,7 @@ static void playbackApp() {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
     .sample_rate = MIC_SAMPLE_RATE,
     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-    .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT,
+    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
     .communication_format = I2S_COMM_FORMAT_STAND_I2S,
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
     .dma_buf_count = 8,
@@ -1353,6 +1353,7 @@ static void drawCategoryIcon(int cat, int x, int y) {
 // Draw one cell of a grid page; iconIdx indexes launcher icon drawers for
 // apps, or -1/-2/-3 for settings/terminal/games-hub special icons.
 static void drawCategoryCellIcon(int idx, int x, int y) {
+  if (idx >= 100) { drawCategoryIcon(idx - 100, x, y); return; }
   if (idx >= 0) { drawAppIcon(idx, x, y); return; }
   uint16_t c = TERM_GREEN, d = TERM_DIM;
   if (idx == -1) {  // Settings: sliders

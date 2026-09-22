@@ -184,11 +184,47 @@ void calcApp() {
   const int BW = 62, BH = 26, GX = 2, GY = 2;
   const int BY = 78;
 
+  const CalcBtn (*grid)[5] = calcBasic;
+  // repaint a single button (avoids full-screen flicker on cursor moves)
+  auto drawBtn = [&](int idx, bool selected) {
+    int r = idx / COLS, c = idx % COLS;
+    int x = 2 + c * (BW + GX), y = BY + r * (BH + GY);
+    const CalcBtn &b = grid[r][c];
+    bool accent = (b.code == '=') || (b.code == 'C');
+    if (selected) {
+      gfx->fillRoundRect(x, y, BW, BH, 3, TERM_SEL_BG);
+      gfx->setTextColor(BLACK, TERM_SEL_BG);
+    } else {
+      gfx->fillRoundRect(x, y, BW, BH, 3, BLACK);
+      gfx->drawRoundRect(x, y, BW, BH, 3, accent ? TERM_ACCENT : TERM_DIM);
+      gfx->setTextColor(accent ? TERM_ACCENT : TERM_BRIGHT, BLACK);
+    }
+    gfx->setTextSize(1);
+    int tw = strlen(b.lbl) * 6;
+    gfx->setCursor(x + (BW - tw) / 2, y + (BH - 8) / 2);
+    gfx->print(b.lbl);
+  };
+
+  int lastSelBtn = -1;
+  bool firstPaint = true;
+  bool gridSwitch = false;
   while (true) {
-    const CalcBtn (*grid)[5] = page ? calcSci : calcBasic;
+    grid = page ? calcSci : calcBasic;
+    // cursor moved: repaint only the two affected buttons
+    if (!firstPaint && !gridSwitch && sel != lastSelBtn) {
+      drawBtn(lastSelBtn, false);
+      drawBtn(sel, true);
+      lastSelBtn = sel;
+      continue;
+    }
     if (needsRedraw) {
       needsRedraw = false;
-      gfx->fillScreen(BLACK);
+      if (!firstPaint) {
+        // partial redraw: header + display only, buttons stay
+        gfx->fillRect(0, 0, SCREEN_W, BY - 2, BLACK);
+      } else {
+        gfx->fillScreen(BLACK);
+      }
       // header
       gfx->setTextSize(1);
       gfx->setTextColor(TERM_DIM, BLACK);
@@ -209,39 +245,28 @@ void calcApp() {
       int sw = shown.length() * 12;
       gfx->setCursor(SCREEN_W - 8 - sw, 52);
       gfx->print(shown);
-      // buttons
-      for (int r = 0; r < ROWS; r++) {
-        for (int c = 0; c < COLS; c++) {
-          int x = 2 + c * (BW + GX), y = BY + r * (BH + GY);
-          const CalcBtn &b = grid[r][c];
-          bool accent = (b.code == '=') || (b.code == 'C');
-          if (sel == r * COLS + c) {
-            gfx->fillRoundRect(x, y, BW, BH, 3, TERM_SEL_BG);
-            gfx->setTextColor(BLACK, TERM_SEL_BG);
-          } else {
-            gfx->drawRoundRect(x, y, BW, BH, 3, accent ? TERM_ACCENT : TERM_DIM);
-            gfx->fillRoundRect(x + 1, y + 1, BW - 2, BH - 2, 3, BLACK);
-            gfx->setTextColor(accent ? TERM_ACCENT : TERM_BRIGHT, BLACK);
-          }
-          gfx->setTextSize(1);
-          int tw = strlen(b.lbl) * 6;
-          gfx->setCursor(x + (BW - tw) / 2, y + (BH - 8) / 2);
-          gfx->print(b.lbl);
-        }
+      // buttons: full grid only on first paint or page switch; else none
+      if (firstPaint || gridSwitch) {
+        for (int r = 0; r < ROWS; r++)
+          for (int c = 0; c < COLS; c++)
+            drawBtn(r * COLS + c, r * COLS + c == sel);
+        gfx->setTextColor(TERM_DIM, BLACK);
+        gfx->setCursor(4, SCREEN_H - 8);
+        gfx->print("trackball+click or type  Long=back");
       }
-      gfx->setTextColor(TERM_DIM, BLACK);
-      gfx->setCursor(4, SCREEN_H - 8);
-      gfx->print("trackball+click or type  Long=back");
+      firstPaint = false;
+      gridSwitch = false;
+      lastSelBtn = sel;
     }
     InputEventP e;
     if (!pdaGetInput(e, 30)) continue;
 
     const CalcBtn &b = grid[sel / COLS][sel % COLS];
     char code = 0;
-    if (e.ev == PDA_EV_UP) { sel = (sel + 30 - COLS) % 30; needsRedraw = true; continue; }
-    else if (e.ev == PDA_EV_DOWN) { sel = (sel + COLS) % 30; needsRedraw = true; continue; }
-    else if (e.ev == PDA_EV_LEFT) { sel = (sel + 29) % 30; needsRedraw = true; continue; }
-    else if (e.ev == PDA_EV_RIGHT) { sel = (sel + 1) % 30; needsRedraw = true; continue; }
+    if (e.ev == PDA_EV_UP) { sel = (sel + 30 - COLS) % 30; continue; }
+    else if (e.ev == PDA_EV_DOWN) { sel = (sel + COLS) % 30; continue; }
+    else if (e.ev == PDA_EV_LEFT) { sel = (sel + 29) % 30; continue; }
+    else if (e.ev == PDA_EV_RIGHT) { sel = (sel + 1) % 30; continue; }
     else if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) code = b.code;
     else if (e.ev == PDA_EV_DELETE) code = '<';
     else if (e.ev == PDA_EV_CHAR) {
@@ -266,7 +291,7 @@ void calcApp() {
         }
         break;
       }
-      case 'T': page = !page; sel = 0; break;
+      case 'T': page = !page; sel = 0; gridSwitch = true; break;
       case 'D': deg = !deg; break;
       case 'M': {
         String r = expr.length() ? calcEvaluate(expr, deg, lastAns.toDouble()) : lastAns;

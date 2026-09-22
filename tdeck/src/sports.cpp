@@ -123,7 +123,7 @@ static int spFetchScoreboard(const char *path, const char *dateCompact,
           if (comps.size() > 0) {
             JsonArray teams = comps[0]["competitors"].as<JsonArray>();
             for (JsonObject c : teams) {
-              const char *ab = c["team"]["abbreviation"] | c["team"]["abbreviation"].as<const char*>();
+              const char *ab = c["team"]["abbreviation"] | "?";
               int score = String((const char*)(c["score"] | "0")).toInt();
               bool isHome = String((const char*)(c["homeAway"] | "away")) == "home";
               if (isHome) { strlcpy(g.home, ab ? ab : "?", sizeof(g.home)); g.homeScore = score; }
@@ -131,6 +131,41 @@ static int spFetchScoreboard(const char *path, const char *dateCompact,
             }
           }
           n++;
+        }
+      }
+    }
+  }
+  http.end();
+  return n;
+}
+
+// count games (+ live count) for a league/date without keeping payloads;
+// returns -1 on network error
+static int spCountGames(const char *path, const char *dateCompact, int &nLiveOut) {
+  nLiveOut = 0;
+  if (WiFi.status() != WL_CONNECTED) return -1;
+  char url[160];
+  snprintf(url, sizeof(url),
+           "http://site.api.espn.com/apis/site/v2/sports/%s/scoreboard?dates=%s",
+           path, dateCompact);
+  JsonDocument filter;
+  filter["events"][0]["status"]["type"]["state"] = true;
+  HTTPClient http;
+  http.begin(url);
+  http.setTimeout(6000);
+  int code = http.GET();
+  int n = 0;
+  if (code == 200) {
+    JsonDocument doc;
+    DeserializationError err =
+      deserializeJson(doc, *http.getStreamPtr(), DeserializationOption::Filter(filter));
+    if (!err) {
+      JsonArray evs = doc["events"].as<JsonArray>();
+      if (!evs.isNull()) {
+        for (JsonObject ev : evs) {
+          n++;
+          const char *st = ev["status"]["type"]["state"] | "";
+          if (st && strcmp(st, "in") == 0) nLiveOut++;
         }
       }
     }
@@ -248,6 +283,22 @@ static void spDrawMsg(const char *l1, const char *l2) {
 static int spLeaguePicker(int startSel) {
   int sel = startSel;
   bool needsRedraw = true;
+  // cached per-league game/live counts for today (fetched once per app entry)
+  static int counts[N_LEAGUES];
+  static int nLive[N_LEAGUES];
+  static bool countsFetched = false;
+  if (!countsFetched) {
+    for (int i = 0; i < N_LEAGUES; i++) { counts[i] = -1; nLive[i] = 0; }
+    if (WiFi.status() == WL_CONNECTED) {
+      char dateCompact[12];
+      spDateCompact(0, dateCompact, sizeof(dateCompact));
+      for (int i = 0; i < N_LEAGUES; i++) {
+        counts[i] = spCountGames(leagues[i].path, dateCompact, nLive[i]);
+        needsRedraw = true;
+      }
+    }
+    countsFetched = true;
+  }
   while (true) {
     if (needsRedraw) {
       needsRedraw = false;
@@ -271,6 +322,14 @@ static int spLeaguePicker(int startSel) {
         } else gfx->setTextColor(TERM_BRIGHT, BLACK);
         gfx->setCursor(10, y);
         gfx->print(leagues[top + i].name);
+        // right column: games today / live games
+        char cb[16];
+        if (counts[top + i] < 0) snprintf(cb, sizeof(cb), " --");
+        else if (nLive[top + i] > 0) snprintf(cb, sizeof(cb), " %d (%d live)", counts[top + i], nLive[top + i]);
+        else snprintf(cb, sizeof(cb), " %d gm", counts[top + i]);
+        int cw = strlen(cb) * 6;
+        gfx->setCursor(SCREEN_W - 8 - cw, y);
+        gfx->print(cb);
       }
     }
     InputEventP e;

@@ -94,6 +94,7 @@ static void radioAudioDeinit() {
     delete audio;
     audio = NULL;
   }
+  WiFi.setSleep(true);    // back to power saving when not streaming
   radioInited = false;
   isPlaying = false;
 }
@@ -108,6 +109,7 @@ static bool radioTune(int idx) {
   if (!radioAudioInit()) return false;
   radioStop();
   curStation = idx;
+  WiFi.setSleep(false);   // keep radio responsive; modem sleep drops streams
   isPlaying = audio->connecttohost(stations[idx].url.c_str());
   return isPlaying;
 }
@@ -164,7 +166,7 @@ void radioApp() {
       full = false;
       lastFrame = millis();
     }
-    if (isPlaying && audio) audio->loop();
+    if (audio) audio->loop();
 
     InputEventP e;
     if (!pdaGetInput(e, 20)) continue;

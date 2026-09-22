@@ -1149,11 +1149,15 @@ void flappyApp() {
 // ============================ Games hub ============================
 static const char *const gameNames[] = {
   "Chess", "Go", "Solit", "Chkrs", "Snake", "Flappy",
-  "Tetris", "Brkout", "2048", "Mines", "Pong", "Revrsi", "Stats"
+  "Tetris", "Brkout", "2048", "Mines", "Pong", "Revrsi",
+  "C4", "Btlshp", "Wordl", "Sudku", "Sokbn",
+  "Invad", "Astrd", "Dodle", "Hearts", "Spades", "Bkgmn", "Stats"
 };
 static void (*const gameRun[])(void) = {
   chessApp, goApp, solitaireApp, checkersApp, snakeApp, flappyApp,
   tetrisApp, breakoutApp, game2048App, minesApp, pongApp, reversiApp,
+  connect4App, battleshipApp, wordleApp, sudokuApp, sokobanApp,
+  invadersApp, asteroidsApp, doodleApp, heartsApp, spadesApp, backgammonApp,
   gsStatsScreen
 };
 #define N_GAMES (int)(sizeof(gameNames)/sizeof(gameNames[0]))
@@ -1256,6 +1260,96 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->drawFastVLine(x + 11, y + 12, 4, c);
       gfx->drawFastHLine(x + 8, y + 16, 8, c);
       break;
+    case 13: {  // Connect4: discs stack
+      for (int r = 0; r < 3; r++)
+        for (int cc = 0; cc < 3; cc++)
+          gfx->drawCircle(x + 6 + cc * 6, y + 8 + r * 6, 2,
+                          (r + cc) % 2 ? TERM_BRIGHT : c);
+      gfx->drawRect(x + 3, y + 22, 18, 2, c);
+      break;
+    }
+    case 14: {  // Battleship: ship + crosshair
+      gfx->drawFastHLine(x + 3, y + 14, 18, c);
+      gfx->fillRect(x + 8, y + 10, 8, 4, c);
+      gfx->fillRect(x + 10, y + 7, 4, 3, c);
+      gfx->drawLine(x + 2, y + 3, x + 6, y + 7, TERM_BRIGHT);
+      gfx->drawLine(x + 6, y + 3, x + 2, y + 7, TERM_BRIGHT);
+      break;
+    }
+    case 15: {  // Wordle: 5 letter tiles
+      for (int i = 0; i < 5; i++) {
+        gfx->drawRect(x + 1 + i * 5, y + 8, 4, 8,
+                      i == 0 ? TERM_BRIGHT : c);
+        gfx->fillRect(x + 1 + (i == 2 ? 5 : 0), y + 16, 3, 3,
+                      i == 2 ? TERM_BRIGHT : TERM_DIM);
+      }
+      break;
+    }
+    case 16: {  // Sudoku: 3x3 grid with digits
+      gfx->drawRect(x + 4, y + 4, 16, 16, c);
+      gfx->drawFastVLine(x + 9, y + 4, 16, d);
+      gfx->drawFastVLine(x + 15, y + 4, 16, d);
+      gfx->drawFastHLine(x + 4, y + 9, 16, d);
+      gfx->drawFastHLine(x + 4, y + 15, 16, d);
+      gfx->fillRect(x + 6, y + 6, 2, 2, TERM_BRIGHT);
+      gfx->fillRect(x + 11, y + 11, 2, 2, TERM_BRIGHT);
+      gfx->fillRect(x + 16, y + 16, 2, 2, TERM_BRIGHT);
+      break;
+    }
+    case 17: {  // Sokoban: box + target
+      gfx->drawRect(x + 10, y + 10, 8, 8, c);
+      gfx->drawLine(x + 10, y + 10, x + 17, y + 17, d);
+      gfx->drawLine(x + 17, y + 10, x + 10, y + 17, d);
+      gfx->drawCircle(x + 6, y + 7, 2, TERM_BRIGHT);
+      break;
+    }
+    case 18: {  // Invaders: alien + ship
+      gfx->fillRect(x + 6, y + 4, 12, 3, c);
+      gfx->fillRect(x + 4, y + 7, 16, 3, c);
+      gfx->fillRect(x + 6, y + 10, 3, 2, c);
+      gfx->fillRect(x + 15, y + 10, 3, 2, c);
+      gfx->fillRect(x + 10, y + 18, 4, 2, TERM_BRIGHT);
+      gfx->fillRect(x + 8, y + 20, 8, 2, TERM_BRIGHT);
+      break;
+    }
+    case 19: {  // Asteroids: ship + rocks
+      gfx->fillCircle(x + 6, y + 8, 3, d);
+      gfx->drawCircle(x + 18, y + 6, 3, c);
+      gfx->drawLine(x + 8, y + 18, x + 14, y + 10, TERM_BRIGHT);
+      gfx->drawLine(x + 14, y + 10, x + 20, y + 18, TERM_BRIGHT);
+      gfx->drawLine(x + 8, y + 18, x + 20, y + 18, TERM_BRIGHT);
+      break;
+    }
+    case 20: {  // Doodle: bouncing character + platform
+      gfx->fillCircle(x + 12, y + 8, 4, TERM_BRIGHT);
+      gfx->fillCircle(x + 10, y + 7, 1, BLACK);
+      gfx->fillCircle(x + 14, y + 7, 1, BLACK);
+      gfx->fillRect(x + 5, y + 17, 14, 3, c);
+      break;
+    }
+    case 21: {  // Hearts: heart shape
+      gfx->fillCircle(x + 8, y + 9, 4, TERM_RED);
+      gfx->fillCircle(x + 16, y + 9, 4, TERM_RED);
+      for (int i = 0; i < 7; i++)
+        gfx->fillRect(x + 4 + i, y + 12 + i, 17 - 2 * i, 1, TERM_RED);
+      break;
+    }
+    case 22: {  // Spades: spade shape
+      gfx->fillCircle(x + 9, y + 10, 5, c);
+      gfx->fillCircle(x + 15, y + 10, 5, c);
+      gfx->fillTriangle(x + 12, y + 5, x + 5, y + 14, x + 19, y + 14, c);
+      gfx->fillTriangle(x + 8, y + 16, x + 16, y + 16, x + 12, y + 22, c);
+      break;
+    }
+    case 23: {  // Backgammon: dice + triangle board
+      gfx->drawRect(x + 2, y + 3, 6, 6, TERM_BRIGHT);
+      gfx->fillRect(x + 4, y + 5, 2, 2, TERM_BRIGHT);
+      gfx->drawRect(x + 16, y + 3, 6, 6, TERM_BRIGHT);
+      gfx->fillRect(x + 19, y + 5, 2, 2, TERM_BRIGHT);
+      gfx->fillTriangle(x + 8, y + 20, x + 12, y + 12, x + 16, y + 20, c);
+      gfx->fillCircle(x + 12, y + 17, 2, TERM_BRIGHT);
+      break;
+    }
   }
 }
 

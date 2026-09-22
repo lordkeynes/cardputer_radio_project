@@ -22,7 +22,9 @@ static bool statsLoaded = false;
 
 static const char *const gsNames[GS_N] = {
   "Chess", "Go", "Solitaire", "Checkers", "Snake", "Flappy",
-  "Tetris", "Breakout", "2048", "Mines", "Pong", "Reversi"};
+  "Tetris", "Breakout", "2048", "Mines", "Pong", "Reversi",
+  "Connect4", "Battleship", "Wordle", "Sudoku", "Sokoban",
+  "Invaders", "Asteroids", "Doodle", "Hearts", "Spades", "Backgammon"};
 
 static void gsLoad() {
   if (statsLoaded) return;
@@ -101,21 +103,21 @@ void gsStatsScreen() {
   gfx->setCursor(8, 6);
   gfx->print("Game stats");
   gfx->setTextSize(1);
-  int y = 32;
   gfx->setTextColor(TERM_DIM, BLACK);
-  gfx->setCursor(8, y);
-  gfx->print("Game        W    L / hi");
-  y += 14;
+  gfx->setCursor(8, 26);
+  gfx->print("Game          hi / W-L   Game          hi / W-L");
+  int colh = (GS_N + 1) / 2;
   for (int i = 0; i < GS_N; i++) {
+    int cx = (i / colh) * 156;
+    int y = 38 + (i % colh) * 13;
     gfx->setTextColor(TERM_BRIGHT, BLACK);
-    gfx->setCursor(8, y);
+    gfx->setCursor(8 + cx, y);
     gfx->print(gsNames[i]);
-    gfx->setCursor(120, y);
+    gfx->setCursor(88 + cx, y);
     if (statsHi[i] > 0 || (statsWins[i] == 0 && statsLosses[i] == 0))
-      gfx->printf("hi %d", statsHi[i]);
+      gfx->printf("hi%d", statsHi[i]);
     else
-      gfx->printf("%-5d%-5d", statsWins[i], statsLosses[i]);
-    y += 14;
+      gfx->printf("%d-%d", statsWins[i], statsLosses[i]);
   }
   gfx->setTextColor(TERM_DIM, BLACK);
   gfx->setCursor(4, SCREEN_H - 10);

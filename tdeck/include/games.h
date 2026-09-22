@@ -1,5 +1,4 @@
 #pragma once
-
 void chessApp();
 void goApp();
 void solitaireApp();
@@ -12,4 +11,15 @@ void game2048App();
 void minesApp();
 void pongApp();
 void reversiApp();
+void connect4App();
+void battleshipApp();
+void wordleApp();
+void sudokuApp();
+void sokobanApp();
+void invadersApp();
+void asteroidsApp();
+void doodleApp();
+void heartsApp();
+void spadesApp();
+void backgammonApp();
 void gamesApp();

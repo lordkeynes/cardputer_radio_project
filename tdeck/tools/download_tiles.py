@@ -88,6 +88,21 @@ def main():
     ua = f"tdeck-notes-recorder/1.0 ({args.contact})" if args.contact else "tdeck-notes-recorder/1.0"
     HEADERS = {"User-Agent": ua}
 
+    # Fail fast with a helpful message if we cannot write to the SD mount.
+    probe = os.path.join(args.sd, "map")
+    try:
+        os.makedirs(probe, exist_ok=True)
+    except PermissionError:
+        print(f"ERROR: cannot write to {args.sd}")
+        print("The SD card is mounted without write permission for your user.")
+        print("Fix options (pick one):")
+        print("  1. Re-mount writable, e.g.:")
+        print("       sudo mount -o remount,rw,uid=$(id -u),gid=$(id -g) " + args.sd)
+        print("  2. Own the existing files (they were probably copied as root):")
+        print(f"       sudo chown -R $(id -un):$(id -gn) {args.sd}")
+        print("  3. Run the script with sudo (not recommended).")
+        sys.exit(1)
+
     zooms = []
     if "-" in args.zooms:
         z0, z1 = args.zooms.split("-")

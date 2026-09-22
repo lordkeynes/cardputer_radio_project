@@ -380,22 +380,41 @@ void calendarApp() {
       gfx->setTextSize(1);
       gfx->setTextColor(TERM_DIM, BLACK);
       gfx->setCursor(4, SCREEN_H - 12);
-      gfx->print("U/D month L/R day Click=today Long=back");
+      gfx->print("TB=day/wk m/p=mo y/Y=yr t=today");
     }
     InputEventP e;
     if (!pdaGetInput(e, 100)) continue;
-    switch (e.ev) {
-      case PDA_EV_UP: viewMonth--; if (viewMonth < 1) { viewMonth = 12; viewYear--; } selDay = 0; needsRedraw = true; break;
-      case PDA_EV_DOWN: viewMonth++; if (viewMonth > 12) { viewMonth = 1; viewYear++; } selDay = 0; needsRedraw = true; break;
-      case PDA_EV_LEFT: if (selDay > 1) selDay--; needsRedraw = true; break;
-      case PDA_EV_RIGHT: {
-        static const int dim[] = {31,28,31,30,31,30,31,31,30,31,30,31};
-        int days = dim[viewMonth - 1];
-        bool leap = (viewYear % 4 == 0 && viewYear % 100 != 0) || viewYear % 400 == 0;
-        if (viewMonth == 2 && leap) days = 29;
-        if (selDay < days) selDay++; else selDay = 1;
-        needsRedraw = true; break;
+    // helpers for month navigation
+    auto daysIn = [&](int y, int m) {
+      static const int dim[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+      int d = dim[m - 1];
+      bool leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+      if (m == 2 && leap) d = 29;
+      return d;
+    };
+    auto prevMonth = [&]() {
+      viewMonth--; if (viewMonth < 1) { viewMonth = 12; viewYear--; }
+    };
+    auto nextMonth = [&]() {
+      viewMonth++; if (viewMonth > 12) { viewMonth = 1; viewYear++; }
+    };
+    auto jumpDay = [&](int delta) {   // move cursor by days, crossing months
+      selDay += delta;
+      while (selDay < 1) {
+        prevMonth();
+        selDay += daysIn(viewYear, viewMonth);
       }
+      while (selDay > daysIn(viewYear, viewMonth)) {
+        selDay -= daysIn(viewYear, viewMonth);
+        nextMonth();
+      }
+      needsRedraw = true;
+    };
+    switch (e.ev) {
+      case PDA_EV_UP: jumpDay(-7); break;
+      case PDA_EV_DOWN: jumpDay(7); break;
+      case PDA_EV_LEFT: jumpDay(-1); break;
+      case PDA_EV_RIGHT: jumpDay(1); break;
       case PDA_EV_SELECT:
       case PDA_EV_NEWLINE: {
         time_t now = time(NULL);
@@ -407,6 +426,31 @@ void calendarApp() {
         needsRedraw = true;
         break;
       }
+      case PDA_EV_CHAR:
+        if (e.ch == 'm') { nextMonth(); needsRedraw = true; }
+        else if (e.ch == 'p') { prevMonth(); needsRedraw = true; }
+        else if (e.ch == 'y') { viewYear++; needsRedraw = true; }
+        else if (e.ch == 'Y') { viewYear--; needsRedraw = true; }
+        else if (e.ch == 't') {
+          time_t now = time(NULL);
+          struct tm lt;
+          localtime_r(&now, &lt);
+          viewYear = lt.tm_year + 1900;
+          viewMonth = lt.tm_mon + 1;
+          selDay = lt.tm_mday;
+          needsRedraw = true;
+        }
+        else if (e.ch == 'w') { jumpDay(7); }
+        else if (e.ch == 'b') { jumpDay(-7); }
+        else if (e.ch == '+' || e.ch == '=') { jumpDay(1); }
+        else if (e.ch == '-') { jumpDay(-1); }
+        // clamp cursor into new month range if month/year changed
+        {
+          int dim = daysIn(viewYear, viewMonth);
+          if (selDay > dim) selDay = dim;
+          if (selDay < 1) selDay = 1;
+        }
+        break;
       case PDA_EV_LONGSELECT:
       case PDA_EV_BACK:
         return;

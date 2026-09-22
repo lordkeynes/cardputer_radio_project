@@ -37,7 +37,9 @@ static void spEnsureClock() {
     wifiAutoConnect();   // boot auto-connect may not have finished
     if (WiFi.status() != WL_CONNECTED) return;
   }
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  // configTzTime (not configTime) so the POSIX TZ env var survives and
+  // localtime() keeps using the user's saved timezone afterwards
+  configTzTime(pdaGetTimezone(), "pool.ntp.org", "time.nist.gov", 0);
   // wait up to 4 s for NTP
   for (int i = 0; i < 40 && time(NULL) < 1700000000; i++) delay(100);
 }
@@ -120,6 +122,7 @@ struct SpBoxRow { char name[20]; char away[12]; char home[12]; };
 
 struct SpDetail {
   char away[14], home[14];
+  char awayAb[6], homeAb[6];
   int awayScore, homeScore;
   char status[28];
   int awayPer[SP_MAX_PERIODS], homePer[SP_MAX_PERIODS];
@@ -166,10 +169,6 @@ static int spFetchScoreboard(const char *path, const char *dateCompact,
   HTTPClient http;
   http.begin(url);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.setUserAgent(
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-      "Chrome/124.0.0.0 Safari/537.36");
-  http.addHeader("Accept", "application/json");
   http.setTimeout(9000);
   int code = http.GET();
   spLastHttpCode = code;
@@ -230,10 +229,6 @@ static int spCountGames(const char *path, const char *dateCompact, int &nLiveOut
   HTTPClient http;
   http.begin(url);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.setUserAgent(
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-      "Chrome/124.0.0.0 Safari/537.36");
-  http.addHeader("Accept", "application/json");
   http.setTimeout(6000);
   int code = http.GET();
   Serial.printf("[sports] count %s -> HTTP %d\n", path, code);
@@ -297,18 +292,14 @@ static void spFetchDetail(const char *path, const char *eventId, SpDetail &d) {
   filter["header"]["competitions"][0]["competitors"][0]["score"] = true;
   filter["header"]["competitions"][0]["competitors"][0]["homeAway"] = true;
   filter["header"]["competitions"][0]["competitors"][0]["linescores"][0]["value"] = true;
-  // box score: team statistics
   filter["boxscore"]["teams"][0]["team"]["abbreviation"] = true;
+  filter["boxscore"]["teams"][0]["team"]["displayName"] = true;
   filter["boxscore"]["teams"][0]["statistics"][0]["displayName"] = true;
   filter["boxscore"]["teams"][0]["statistics"][0]["displayValue"] = true;
 
   HTTPClient http;
   http.begin(url);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.setUserAgent(
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-      "Chrome/124.0.0.0 Safari/537.36");
-  http.addHeader("Accept", "application/json");
   http.setTimeout(9000);
   int code = http.GET();
   spLastHttpCode = code;
@@ -331,8 +322,9 @@ static void spFetchDetail(const char *path, const char *eventId, SpDetail &d) {
         if (!dn || !dn[0]) dn = ab;
         int score = String((const char*)(c["score"] | "0")).toInt();
         bool isHome = String((const char*)(c["homeAway"] | "away")) == "home";
-        if (isHome) { strlcpy(d.home, dn, sizeof(d.home)); d.homeScore = score; }
-        else        { strlcpy(d.away, dn, sizeof(d.away)); d.awayScore = score; }
+        const char *dab = c["team"]["abbreviation"] | "?";
+        if (isHome) { strlcpy(d.home, dn, sizeof(d.home)); strlcpy(d.homeAb, dab, sizeof(d.homeAb)); d.homeScore = score; }
+        else        { strlcpy(d.away, dn, sizeof(d.away)); strlcpy(d.awayAb, dab, sizeof(d.awayAb)); d.awayScore = score; }
         int *dst = isHome ? d.homePer : d.awayPer;
         JsonArray ls = c["linescores"].as<JsonArray>();
         int cnt = 0;
@@ -364,9 +356,9 @@ static void spFetchDetail(const char *path, const char *eventId, SpDetail &d) {
           strlcpy(r.home, b[i]["displayValue"] | "-", sizeof(r.home));
           d.nRows++;
         }
-        // boxscore teams order can differ from header order; align by abbr
+        // boxscore teams order can differ from header order; align by abbreviation
         const char *ab0 = bt[0]["team"]["abbreviation"] | "";
-        if (strcmp(ab0, d.home) == 0 && strcmp(d.away, d.home) != 0) {
+        if (ab0[0] && strcmp(ab0, d.homeAb) == 0 && strcmp(d.awayAb, d.homeAb) != 0) {
           for (int i = 0; i < d.nRows; i++) {
             char tmp[12];
             strlcpy(tmp, d.rows[i].away, sizeof(tmp));

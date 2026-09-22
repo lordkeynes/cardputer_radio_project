@@ -5,4 +5,5 @@ void goApp();
 void solitaireApp();
 void checkersApp();
 void snakeApp();
+void flappyApp();
 void gamesApp();

@@ -1027,12 +1027,131 @@ void snakeApp() {
   }
 }
 
+// ============================ Flappy ============================
+// Flappy-bird style: click/Enter to flap, avoid pipes, score per pipe.
+#define FL_GRAVITY     0.35f
+#define FL_FLAP        -6.2f
+#define FL_PIPE_W      26
+#define FL_GAP         66
+#define FL_SPEED       2.4f
+#define FL_STEP_MS     28
+
+struct Flappy {
+  float birdY, birdV;
+  float pipeX;
+  int   gapY;
+  int   score;
+  bool  dead, started;
+};
+
+static void flappyReset(Flappy &f) {
+  f.birdY = SCREEN_H / 2;
+  f.birdV = 0;
+  f.pipeX = SCREEN_W + 40;
+  f.gapY = random(50, SCREEN_H - 50 - FL_GAP);
+  f.score = 0;
+  f.dead = false;
+  f.started = false;
+}
+
+static void flappyDraw(Flappy &f, bool full) {
+  if (full) {
+    gfx->fillScreen(BLACK);
+    gfx->setTextSize(1);
+    gfx->setTextColor(TERM_DIM, BLACK);
+    gfx->setCursor(4, SCREEN_H - 10);
+    gfx->print("click=flap Long=back");
+  }
+  // score
+  gfx->fillRect(SCREEN_W / 2 - 30, 4, 60, 16, BLACK);
+  gfx->setTextSize(2);
+  gfx->setTextColor(TERM_BRIGHT, BLACK);
+  gfx->setCursor(SCREEN_W / 2 - 12, 4);
+  gfx->print(f.score);
+  // pipe: erase the strip behind it, then redraw both pipe bodies
+  int px = (int)f.pipeX;
+  gfx->fillRect(px + FL_PIPE_W, 20, (int)FL_SPEED + 1, SCREEN_H - 40, BLACK);
+  gfx->fillRect(px, 20, FL_PIPE_W, f.gapY - 20, TERM_GREEN);
+  gfx->fillRect(px, f.gapY + FL_GAP, FL_PIPE_W,
+                SCREEN_H - 20 - f.gapY - FL_GAP, TERM_GREEN);
+  // bird (erase old position first)
+  static int lastBy = -1;
+  int by = (int)f.birdY;
+  if (lastBy >= 0 && lastBy != by)
+    gfx->fillCircle(60, lastBy, 5, BLACK);
+  gfx->fillCircle(60, by, 5, TERM_ACCENT);
+  gfx->fillCircle(62, by - 1, 2, BLACK);   // eye
+  lastBy = by;
+  if (f.dead) {
+    gfx->setTextSize(2);
+    gfx->setTextColor(TERM_RED, BLACK);
+    gfx->setCursor(SCREEN_W / 2 - 40, SCREEN_H / 2 - 20);
+    gfx->print("DEAD!");
+    gfx->setTextSize(1);
+    gfx->setTextColor(TERM_BRIGHT, BLACK);
+    gfx->setCursor(SCREEN_W / 2 - 60, SCREEN_H / 2 + 6);
+    gfx->print("click or n = play again");
+  }
+  if (!f.started && !f.dead) {
+    gfx->setTextSize(1);
+    gfx->setTextColor(TERM_BRIGHT, BLACK);
+    gfx->setCursor(SCREEN_W / 2 - 60, SCREEN_H / 2 + 30);
+    gfx->print("click to start");
+  }
+}
+
+
+void flappyApp() {
+  Flappy f;
+  flappyReset(f);
+  gsRecordScore(GS_FLAPPY, 0);   // loads stats
+  int hi = gsGetFlappyHi();
+  bool full = true;
+  unsigned long lastStep = 0;
+  while (true) {
+    if (full) { flappyDraw(f, true); full = false; }
+    InputEventP e;
+    bool got = pdaGetInput(e, 20);
+    if (got) {
+      if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) {
+        if (f.dead) { flappyReset(f); full = true; }
+        else { f.started = true; f.birdV = FL_FLAP; }
+      } else if (e.ev == PDA_EV_CHAR && (e.ch == 'n' || e.ch == 'N')) {
+        if (f.dead) { flappyReset(f); full = true; }
+      } else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) {
+        return;
+      }
+    }
+    if (!f.started || f.dead) continue;
+    if (millis() - lastStep < FL_STEP_MS) continue;
+    lastStep = millis();
+    f.birdV += FL_GRAVITY;
+    f.birdY += f.birdV;
+    f.pipeX -= FL_SPEED;
+    // pipe pass -> score + new pipe
+    if (f.pipeX + FL_PIPE_W < 60 - 5) {
+      f.score++;
+      if (f.score > hi) { hi = f.score; gsRecordScore(GS_FLAPPY, hi); }
+      f.pipeX = SCREEN_W + 10;
+      f.gapY = random(50, SCREEN_H - 50 - FL_GAP);
+    }
+    // collisions
+    bool hitPipe = (f.pipeX < 65 && f.pipeX + FL_PIPE_W > 55) &&
+                   (f.birdY - 5 < f.gapY || f.birdY + 5 > f.gapY + FL_GAP);
+    if (f.birdY < 25 || f.birdY > SCREEN_H - 26 || hitPipe) {
+      f.dead = true;
+      gsRecordScore(GS_FLAPPY, f.score);
+    }
+    flappyDraw(f, false);
+  }
+}
+
 // ============================ Games hub ============================
 static const char *const gameNames[] = {
-  "Chess", "Go", "Solitaire", "Checkers", "Snake", "Stats"
+  "Chess", "Go", "Solitaire", "Checkers", "Snake", "Flappy", "Stats"
 };
 static void (*const gameRun[])(void) = {
-  chessApp, goApp, solitaireApp, checkersApp, snakeApp, gsStatsScreen
+  chessApp, goApp, solitaireApp, checkersApp, snakeApp, flappyApp, gsStatsScreen
 };
 #define N_GAMES (int)(sizeof(gameNames)/sizeof(gameNames[0]))
 
@@ -1075,7 +1194,14 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->drawFastHLine(x + 8, y + 17, 5, TERM_BRIGHT);
       gfx->fillCircle(x + 6, y + 6, 2, TERM_ACCENT);
       break;
-    case 5:  // Stats: trophy
+    case 5:  // Flappy: bird + pipes
+      gfx->fillRect(x + 15, y + 3, 4, 8, c);
+      gfx->fillRect(x + 15, y + 14, 4, 7, c);
+      gfx->fillCircle(x + 8, y + 12, 4, TERM_ACCENT);
+      gfx->fillCircle(x + 10, y + 11, 1, BLACK);
+      gfx->fillTriangle(x + 8, y + 12, x + 12, y + 13, x + 8, y + 14, TERM_BRIGHT);
+      break;
+    case 6:  // Stats: trophy
       gfx->drawRect(x + 7, y + 5, 10, 7, c);
       gfx->drawFastHLine(x + 7, y + 5, 3, c);  // left handle
       gfx->drawFastVLine(x + 7, y + 6, 4, c);

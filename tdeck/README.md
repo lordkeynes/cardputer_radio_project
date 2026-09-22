@@ -154,8 +154,11 @@ network coverage — no attack tooling.
 - **Checkers** — against a jump-preferring AI. Click picks and moves men;
   jumps are enforced.
 - **Snake** — trackball steers, click pauses, **n** restarts.
-- **Stats** — wins/losses per game and the Snake high score, persisted to
-  `/games/stats.txt`; **r** resets.
+- **Flappy** — Flappy-bird clone: click/Enter flaps; a point per pipe
+  passed, high score kept in stats (`n` or click restarts after a crash,
+  long-click exits).
+- **Stats** — wins/losses per game plus the Snake and Flappy high scores,
+  persisted to `/games/stats.txt`; **r** resets.
 
 ### Sports
 

@@ -6,9 +6,11 @@
 #define GS_SOLITAIRE 2
 #define GS_CHECKERS  3
 #define GS_SNAKE     4
-#define GS_N         5
+#define GS_FLAPPY    5
+#define GS_N         6
 
 void gsRecordResult(int game, bool win);
 void gsRecordScore(int game, int score);
 int  gsGetSnakeHi();
+int  gsGetFlappyHi();
 void gsStatsScreen();

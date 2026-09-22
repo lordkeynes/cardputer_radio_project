@@ -122,7 +122,10 @@ static int spFetchScoreboard(const char *path, const char *dateCompact,
   HTTPClient http;
   http.begin(url);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.setUserAgent("tdeck-pda/1.0");
+  http.setUserAgent(
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+      "Chrome/124.0.0.0 Safari/537.36");
+  http.addHeader("Accept", "application/json");
   http.setTimeout(9000);
   int code = http.GET();
   spLastHttpCode = code;
@@ -183,7 +186,10 @@ static int spCountGames(const char *path, const char *dateCompact, int &nLiveOut
   HTTPClient http;
   http.begin(url);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.setUserAgent("tdeck-pda/1.0");
+  http.setUserAgent(
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+      "Chrome/124.0.0.0 Safari/537.36");
+  http.addHeader("Accept", "application/json");
   http.setTimeout(6000);
   int code = http.GET();
   Serial.printf("[sports] count %s -> HTTP %d\n", path, code);
@@ -255,7 +261,10 @@ static void spFetchDetail(const char *path, const char *eventId, SpDetail &d) {
   HTTPClient http;
   http.begin(url);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.setUserAgent("tdeck-pda/1.0");
+  http.setUserAgent(
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+      "Chrome/124.0.0.0 Safari/537.36");
+  http.addHeader("Accept", "application/json");
   http.setTimeout(9000);
   int code = http.GET();
   spLastHttpCode = code;

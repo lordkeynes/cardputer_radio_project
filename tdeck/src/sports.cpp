@@ -15,6 +15,14 @@ extern Arduino_GFX *gfx;
 // 'today' means the actual today for the scoreboard.
 bool wifiAutoConnect();
 
+// Make sure WiFi is up for a fetch; if not, try a quick reconnect (max 6 s)
+// so the app never looks frozen and we get a clear error otherwise.
+static bool spEnsureWifi() {
+  if (WiFi.status() == WL_CONNECTED) return true;
+  wifiAutoConnect();
+  return WiFi.status() == WL_CONNECTED;
+}
+
 static void spEnsureClock() {
   pdaInitTimezone();   // apply saved TZ so 'today' matches the user's day
   time_t now = time(NULL);
@@ -90,12 +98,10 @@ static void spDateCompact(long offsetDays, char *out, size_t n) {
 
 // ---------- scoreboard fetch ----------
 // events[].competitions[].competitors[] + status; sizes kept small via filter
+static int spLastHttpCode = 0;
 static int spFetchScoreboard(const char *path, const char *dateCompact,
                              SpGame *games, int maxGames) {
-  if (WiFi.status() != WL_CONNECTED) {
-    wifiAutoConnect();
-    if (WiFi.status() != WL_CONNECTED) return -1;
-  }
+  if (!spEnsureWifi()) return -1;
   char url[160];
   snprintf(url, sizeof(url),
            "https://site.api.espn.com/apis/site/v2/sports/%s/scoreboard?dates=%s",
@@ -115,6 +121,8 @@ static int spFetchScoreboard(const char *path, const char *dateCompact,
   http.setUserAgent("tdeck-pda/1.0");
   http.setTimeout(9000);
   int code = http.GET();
+  spLastHttpCode = code;
+  Serial.printf("[sports] scoreboard %s -> HTTP %d\n", path, code);
   int n = 0;
   bool ok = false;
   if (code == 200) {
@@ -159,10 +167,7 @@ static int spFetchScoreboard(const char *path, const char *dateCompact,
 // returns -1 on network error
 static int spCountGames(const char *path, const char *dateCompact, int &nLiveOut) {
   nLiveOut = 0;
-  if (WiFi.status() != WL_CONNECTED) {
-    wifiAutoConnect();
-    if (WiFi.status() != WL_CONNECTED) return -1;
-  }
+  if (!spEnsureWifi()) return -1;
   char url[160];
   snprintf(url, sizeof(url),
            "https://site.api.espn.com/apis/site/v2/sports/%s/scoreboard?dates=%s",
@@ -221,10 +226,7 @@ static void spCountsTask(void *pv) {
 static void spFetchDetail(const char *path, const char *eventId, SpDetail &d) {
   memset(&d, 0, sizeof(d));
   d.ok = false;
-  if (WiFi.status() != WL_CONNECTED) {
-    wifiAutoConnect();
-    if (WiFi.status() != WL_CONNECTED) return;
-  }
+  if (!spEnsureWifi()) return;
   char url[192];
   snprintf(url, sizeof(url),
            "https://site.api.espn.com/apis/site/v2/sports/%s/summary?event=%s",
@@ -249,6 +251,8 @@ static void spFetchDetail(const char *path, const char *eventId, SpDetail &d) {
   http.setUserAgent("tdeck-pda/1.0");
   http.setTimeout(9000);
   int code = http.GET();
+  spLastHttpCode = code;
+  Serial.printf("[sports] summary -> HTTP %d\n", code);
   if (code == 200) {
     JsonDocument doc;
     DeserializationError err =
@@ -506,10 +510,11 @@ void sportsApp() {
         if (fetchErr) {
           gfx->setTextColor(TERM_RED, BLACK);
           gfx->setCursor(10, y);
-          gfx->print("WiFi not connected.");
+          if (WiFi.status() != WL_CONNECTED) gfx->print("WiFi not connected.");
+          else { gfx->printf("Fetch failed (HTTP %d).", spLastHttpCode); }
           gfx->setTextColor(TERM_DIM, BLACK);
           gfx->setCursor(10, y + 16);
-          gfx->print("Connect via Network > WiFi first.");
+          gfx->print("r=retry  Long=back");
         } else if (nGames == 0) {
           gfx->setTextColor(TERM_DIM, BLACK);
           gfx->setCursor(10, y);
@@ -534,7 +539,10 @@ void sportsApp() {
       }
       InputEventP e;
       if (!pdaGetInput(e, 50)) continue;
-      if (e.ev == PDA_EV_LEFT)  { dayOffset--; fetched = false; sel = 0; needsRedraw = true; }
+      if (e.ev == PDA_EV_CHAR && (e.ch == 'r' || e.ch == 'R')) {
+        fetchErr = false; fetched = false; needsRedraw = true;
+      }
+      else if (e.ev == PDA_EV_LEFT)  { dayOffset--; fetched = false; sel = 0; needsRedraw = true; }
       else if (e.ev == PDA_EV_RIGHT) { dayOffset++; fetched = false; sel = 0; needsRedraw = true; }
       else if (e.ev == PDA_EV_UP && sel > 0) { sel--; needsRedraw = true; }
       else if (e.ev == PDA_EV_DOWN && sel < nGames - 1) { sel++; needsRedraw = true; }

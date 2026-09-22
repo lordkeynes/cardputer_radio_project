@@ -151,76 +151,146 @@ static int htAIChoose(HeartsG &g, int p) {
   return best;  // -1 shouldn't happen (some card is always legal)
 }
 
-static void htDrawCard(int x, int y, int c, bool faceUp) {
-  gfx->fillRect(x, y, 14, 18, faceUp ? RGB565(0xe8, 0xf0, 0xe8) : TERM_DIM);
-  gfx->drawRect(x, y, 14, 18, TERM_GREEN);
-  if (!faceUp) return;
+static void htDrawCard(int x, int y, int c, bool faceUp, int w = 18, int h = 25) {
+  const uint16_t CARD_FACE = RGB565(0xf5, 0xf2, 0xe6);
+  const uint16_t CARD_BACK = RGB565(0x1a, 0x3d, 0x8f);
+  const uint16_t CARD_EDGE = RGB565(0x30, 0x30, 0x30);
+  gfx->fillRoundRect(x, y, w, h, 2, CARD_EDGE);
+  if (!faceUp) {
+    gfx->fillRoundRect(x + 1, y + 1, w - 2, h - 2, 2, CARD_BACK);
+    gfx->drawLine(x + 2, y + 2, x + w - 3, y + h - 3, RGB565(0x60, 0x80, 0xc0));
+    gfx->drawLine(x + w - 3, y + 2, x + 2, y + h - 3, RGB565(0x60, 0x80, 0xc0));
+    return;
+  }
+  gfx->fillRoundRect(x + 1, y + 1, w - 2, h - 2, 2, CARD_FACE);
   char r = "23456789TJQKA"[cardRank(c) - 2];
-  char s = SUITS[cardSuit(c)];
-  gfx->setTextColor(cardSuit(c) == 1 || cardSuit(c) == 2 ? TERM_RED : RGB565(0, 0, 0));
+  char su = SUITS[cardSuit(c)];
+  uint16_t col = (cardSuit(c) == 1 || cardSuit(c) == 2) ? RGB565(0xc0, 0x1a, 0x1a)
+                                                        : RGB565(0x1a, 0x1a, 0x1a);
+  gfx->setTextColor(col, CARD_FACE);
   gfx->setTextSize(1);
-  gfx->setCursor(x + 3, y + 6);
-  gfx->printf("%c%c", r, s);
+  gfx->setCursor(x + 3, y + 3);
+  gfx->printf("%c", r);
+  gfx->setCursor(x + 3, y + 11);
+  gfx->printf("%c", su);
+  // suit pip center for wide cards
+  if (w >= 14) {
+    gfx->setCursor(x + (w - 6) / 2, y + h - 10);
+    gfx->printf("%c", su);
+  }
+}
+
+// felt-table palette for hearts
+#define HT_FELT   RGB565(0x07, 0x3b, 0x1c)
+#define HT_FELT_D RGB565(0x05, 0x2a, 0x14)
+#define HT_RAIL   RGB565(0x5a, 0x3a, 0x1a)
+#define HT_GOLD   RGB565(0xe8, 0xc0, 0x50)
+
+static void htDrawTableBg() {
+  gfx->fillScreen(HT_FELT);
+  // wooden rail around the table
+  gfx->fillRect(0, 0, SCREEN_W, 4, HT_RAIL);
+  gfx->fillRect(0, SCREEN_H - 18, SCREEN_W, 4, HT_RAIL);
+  gfx->fillRect(0, 0, 3, SCREEN_H, HT_RAIL);
+  gfx->fillRect(SCREEN_W - 3, 0, 3, SCREEN_H, HT_RAIL);
+  // center medallion
+  gfx->drawCircle(SCREEN_W / 2, 118, 40, HT_FELT_D);
+  gfx->drawCircle(SCREEN_W / 2, 118, 44, HT_FELT_D);
+  // corner accents
+  gfx->drawFastHLine(6, 8, 14, HT_FELT_D);
+  gfx->drawFastHLine(SCREEN_W - 20, 8, 14, HT_FELT_D);
+}
+
+static void htDrawSeatTag(int x, int y, const char *name, int pts, int nCards,
+                          bool active) {
+  gfx->setTextSize(1);
+  gfx->setTextColor(active ? HT_GOLD : RGB565(0x9a, 0xb8, 0x9a), HT_FELT);
+  gfx->setCursor(x, y);
+  gfx->printf("%s", name);
+  gfx->setCursor(x, y + 10);
+  gfx->printf("pts %d  [%d]", pts, nCards);
 }
 
 static void htDraw(HeartsG &g, bool full) {
   char buf[40];
   if (full) {
-    gfx->fillScreen(RGB565(0x0c, 0x14, 0x0c));
-    gfx->setTextColor(TERM_GREEN);
+    htDrawTableBg();
+    gfx->setTextColor(HT_GOLD, HT_FELT);
     gfx->setTextSize(1);
-    gfx->setCursor(4, 7); gfx->print("HEARTS");
-    gfx->drawFastHLine(0, 18, SCREEN_W, TERM_DIM);
-    gfx->setTextColor(TERM_DIM);
-    gfx->setCursor(4, SCREEN_H - 10);
-    gfx->print("< > pick  SEL play  BK exit");
+    gfx->setCursor(28, 8);
+    gfx->print("HEARTS");
+    gfx->setTextColor(RGB565(0x9a, 0xb8, 0x9a), HT_FELT);
+    gfx->setCursor(SCREEN_W - 108, 8);
+    snprintf(buf, sizeof(buf), "Trick %d/13", g.round + 1);
+    gfx->print(buf);
   }
+  // title bar values that change: redraw text over felt
   gfx->setTextSize(1);
-  // opponents: show counts around table
-  gfx->fillRect(0, 19, SCREEN_W, 62, RGB565(0x0c, 0x14, 0x0c));
-  for (int p = 1; p < 4; p++) {
-    int bx = p == 1 ? 4 : p == 2 ? 140 : 276;
-    int by = 22;
-    gfx->setTextColor(p == g.turn ? TERM_BRIGHT : TERM_DIM);
-    gfx->setCursor(bx, by);
-    snprintf(buf, sizeof(buf), "%s:%d", g.names[p], g.nh[p]);
-    gfx->print(buf);
-    gfx->setCursor(bx, by + 10);
-    snprintf(buf, sizeof(buf), "pts %d", g.taken[p]);
-    gfx->print(buf);
-  }
-  // trick area
-  gfx->fillRect(0, 82, SCREEN_W, 56, RGB565(0x0c, 0x14, 0x0c));
-  gfx->setTextColor(TERM_DIM);
-  gfx->setCursor(4, 84);
-  snprintf(buf, sizeof(buf), "Trick %d/13  broken:%s", g.round + 1,
-           g.heartsBroken ? "Y" : "N");
+  gfx->setTextColor(RGB565(0x9a, 0xb8, 0x9a), HT_FELT);
+  gfx->setCursor(SCREEN_W - 108, 8);
+  snprintf(buf, sizeof(buf), "Trick %d/13", g.round + 1);
+  gfx->print("         ");
+  gfx->setCursor(SCREEN_W - 108, 8);
   gfx->print(buf);
-  int tx[4] = {140, 40, 140, 240};
-  int ty[4] = {112, 96, 96, 96};
+
+  // opponents: seat tags + face-down fans
+  static const int seatX[4] = {6, 130, 250, 130};
+  for (int p = 1; p < 4; p++) {
+    int sy = (p == 2) ? 22 : 60;
+    htDrawSeatTag(seatX[p], sy, g.names[p], g.taken[p], g.nh[p], p == g.turn);
+    // fan of face-down mini cards
+    int fan = g.nh[p];
+    int fx = (p == 2) ? 150 : (p == 1 ? 8 : 250);
+    for (int i = 0; i < fan && i < 13; i++)
+      htDrawCard(fx + i * 6, sy + 22, -1, false, 8, 12);
+  }
+
+  // trick area: 4 played cards around center
+  int cx = SCREEN_W / 2, cy = 112;
+  static const int trickDX[4] = {-24, 0, 24, 0};
+  static const int trickDY[4] = {12, -14, 12, 38};
   for (int p = 0; p < 4; p++) {
-    if (g.trick[p] >= 0) htDrawCard(tx[p], ty[p], g.trick[p], true);
-    else if (p == g.turn) {
-      gfx->setTextColor(TERM_BRIGHT);
-      gfx->setCursor(tx[p] + 4, ty[p] + 6);
+    if (g.trick[p] >= 0) {
+      htDrawCard(cx + trickDX[p] - 9, cy + trickDY[p], g.trick[p], true);
+    } else if (p == g.turn) {
+      gfx->setTextColor(HT_GOLD, HT_FELT);
+      gfx->setCursor(cx + trickDX[p] - 9, cy + trickDY[p] + 8);
       gfx->print("...");
     }
   }
-  // your points + hand
-  gfx->fillRect(0, 140, SCREEN_W, 70, RGB565(0x0c, 0x14, 0x0c));
-  gfx->setTextColor(TERM_GREEN);
-  gfx->setCursor(4, 142);
-  snprintf(buf, sizeof(buf), "You  pts %d", g.taken[0]);
+  // leader marker
+  if (g.trick[g.lead] >= 0) {
+    gfx->drawRect(cx + trickDX[g.lead] - 11, cy + trickDY[g.lead] - 2,
+                  20, 29, HT_GOLD);
+  }
+
+  // your hand at the bottom
+  int handY = 176;
+  int n = g.nh[0];
+  int cw = 20, ov = 14;
+  int totalW = (n > 0) ? (cw + (n - 1) * ov) : 0;
+  int hx0 = (SCREEN_W - totalW) / 2;
+  for (int i = 0; i < n; i++) {
+    int xc = hx0 + i * ov;
+    int yc = handY + ((i == g.sel) ? -4 : 0);
+    htDrawCard(xc, yc, g.hands[0][i], true, cw, 28);
+  }
+  if (n > 0) {
+    int sx = hx0 + g.sel * ov;
+    gfx->drawRoundRect(sx - 1, handY - 6, cw + 2, 33, 2, HT_GOLD);
+    gfx->fillTriangle(sx + 3, handY - 5, sx + 13, handY - 5, sx + 8, handY - 1, HT_GOLD);
+  }
+  // your score line
+  gfx->setTextColor(HT_GOLD, HT_FELT);
+  gfx->setCursor(8, 212);
+  snprintf(buf, sizeof(buf), "You: %d pts   hearts %s", g.taken[0],
+           g.heartsBroken ? "broken" : "intact");
   gfx->print(buf);
-  int hx = 10;
-  for (int i = 0; i < g.nh[0]; i++) {
-    htDrawCard(hx + i * 16, 156, g.hands[0][i], true);
-  }
-  // selection highlight
-  if (g.nh[0] > 0) {
-    int sx = 10 + g.sel * 16;
-    gfx->drawRect(sx - 1, 155, 16, 20, TERM_BRIGHT);
-  }
+
+  // footer
+  gfx->setTextColor(RGB565(0x9a, 0xb8, 0x9a), HT_FELT);
+  gfx->setCursor(6, SCREEN_H - 13);
+  gfx->print("< > pick  SEL play  BK exit");
 }
 
 static void htEndTrick(HeartsG &g) {

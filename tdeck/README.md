@@ -95,6 +95,33 @@ and writes them as `/map/z<zoom>/<x>/<y>.bin` (256x256, 128 KB each).
 Existing tiles are skipped, so it is safe to re-run. Requires internet on the
 PC; the T-Deck itself never needs a network connection for maps.
 
+The exact SD layout the firmware reads (Dayton example, zoom 16):
+
+```
+<SD>/
+└── map/
+    └── z16/
+        ├── 17451/
+        │   ├── 24868.bin   (131072 bytes each)
+        │   └── 24869.bin
+        ├── 17452/
+        └── 17453/
+```
+
+Verify your card with:
+
+```bash
+find /run/media/$USER/TDECK/map -name "*.bin" | head
+ls -l /run/media/$USER/TDECK/map/z16/17451/24868.bin   # must be 131072 bytes
+```
+
+Common mistakes:
+- tiles copied from another tool may live under `/map/16/...` (no `z`
+  prefix) - the firmware accepts both styles now
+- PNG/JPG tiles are **not** readable; only raw RGB565 `.bin` files produced
+  by the script work
+- the file must sit directly in the `x` folder, not in a subfolder
+
 ### Calculator
 Basic arithmetic with a recursive-descent expression parser: `+ - * / ( )`
 and decimal points. Type an expression, Enter evaluates, long-click exits.

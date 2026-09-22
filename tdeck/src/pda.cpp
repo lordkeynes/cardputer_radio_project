@@ -301,16 +301,16 @@ void calendarApp() {
       gfx->fillScreen(BLACK);
       const char *months[] = {"Jan","Feb","Mar","Apr","May","Jun",
                               "Jul","Aug","Sep","Oct","Nov","Dec"};
-      gfx->setTextSize(2);
+      gfx->setTextSize(1);
       gfx->setTextColor(TERM_GREEN, BLACK);
-      gfx->setCursor(90, 8);
+      gfx->setCursor(8, 8);
       gfx->printf("%s %d", months[viewMonth - 1], viewYear);
 
       const char *dows[] = {"Su","Mo","Tu","We","Th","Fr","Sa"};
       gfx->setTextSize(1);
       gfx->setTextColor(TERM_DIM, BLACK);
       for (int i = 0; i < 7; i++) {
-        gfx->setCursor(18 + i * 44, 32);
+        gfx->setCursor(24 + i * 42, 30);
         gfx->print(dows[i]);
       }
       static const int dim[] = {31,28,31,30,31,30,31,31,30,31,30,31};
@@ -329,27 +329,27 @@ void calendarApp() {
       localtime_r(&now, &lt);
       todayD = lt.tm_mday; todayM = lt.tm_mon + 1; todayY = lt.tm_year + 1900;
 
-      gfx->setTextSize(2);
+      gfx->setTextSize(1);
       for (int d = 1; d <= days; d++) {
         int cell = startDow + d - 1;
         int row = cell / 7, col = cell % 7;
-        int x = 10 + col * 44, y = 44 + row * 26;
+        int x = 18 + col * 42, y = 42 + row * 22;
         bool isToday = (d == todayD && viewMonth == todayM && viewYear == todayY);
         bool isSel = (d == selDay);
         int nDue = todoCountForDate(viewYear, viewMonth, d);
         if (isSel) {
-          gfx->fillRect(x, y - 2, 40, 24, TERM_SEL_BG);
+          gfx->fillRect(x, y - 2, 38, 18, TERM_SEL_BG);
           gfx->setTextColor(BLACK, TERM_SEL_BG);
         } else if (isToday) {
-          gfx->drawRect(x, y - 2, 40, 24, TERM_GREEN);
+          gfx->drawRect(x, y - 2, 38, 18, TERM_GREEN);
           gfx->setTextColor(TERM_GREEN, BLACK);
         } else {
           gfx->setTextColor(WHITE, BLACK);
         }
-        gfx->setCursor(x + 6, y + 2);
+        gfx->setCursor(x + 4, y + 2);
         gfx->print(d);
         if (nDue > 0) {
-          gfx->fillCircle(x + 32, y + 16, 2, isSel ? BLACK : RGB565(255, 200, 0));
+          gfx->fillCircle(x + 30, y + 12, 2, isSel ? BLACK : RGB565(255, 200, 0));
         }
       }
       // Task list for selected day (below grid, y from 180)
@@ -359,12 +359,12 @@ void calendarApp() {
         int n = todoLoadTasks(tasks, TODO_MAX_TASKS);
         int shown = 0;
         gfx->setTextColor(TERM_ACCENT, BLACK);
-        gfx->setCursor(8, 200);
+        gfx->setCursor(8, 150);
         gfx->printf("%d %s:", selDay, months[viewMonth - 1]);
         for (int i = 0; i < n && shown < 3; i++) {
           if (tasks[i].dueYear == viewYear && tasks[i].dueMonth == viewMonth &&
               tasks[i].dueDay == selDay) {
-            gfx->setCursor(8, 212 + shown * 10);
+            gfx->setCursor(8, 162 + shown * 12);
             gfx->setTextColor(tasks[i].done ? RGB565(120, 120, 120) : WHITE, BLACK);
             gfx->print(tasks[i].done ? "[x] " : "[ ] ");
             gfx->print(tasks[i].text);
@@ -372,7 +372,7 @@ void calendarApp() {
           }
         }
         if (shown == 0) {
-          gfx->setCursor(8, 212);
+          gfx->setCursor(8, 162);
           gfx->setTextColor(TERM_DIM, BLACK);
           gfx->print("(no tasks)");
         }
@@ -380,7 +380,7 @@ void calendarApp() {
       gfx->setTextSize(1);
       gfx->setTextColor(TERM_DIM, BLACK);
       gfx->setCursor(4, SCREEN_H - 12);
-      gfx->print("TB=day/wk m/p=mo y/Y=yr t=today");
+      gfx->print("TB=day l/r=week m/p=mo y/Y=yr t=today");
     }
     InputEventP e;
     if (!pdaGetInput(e, 100)) continue;
@@ -411,10 +411,10 @@ void calendarApp() {
       needsRedraw = true;
     };
     switch (e.ev) {
-      case PDA_EV_UP: jumpDay(-7); break;
-      case PDA_EV_DOWN: jumpDay(7); break;
-      case PDA_EV_LEFT: jumpDay(-1); break;
-      case PDA_EV_RIGHT: jumpDay(1); break;
+      case PDA_EV_UP: jumpDay(-1); break;
+      case PDA_EV_DOWN: jumpDay(1); break;
+      case PDA_EV_LEFT: jumpDay(-7); break;
+      case PDA_EV_RIGHT: jumpDay(7); break;
       case PDA_EV_SELECT:
       case PDA_EV_NEWLINE: {
         time_t now = time(NULL);

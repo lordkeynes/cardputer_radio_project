@@ -49,7 +49,7 @@ static const League leagues[] = {
 
 struct SpGame {
   char id[32];
-  char away[6], home[6];
+  char away[14], home[14];
   int awayScore, homeScore;
   char status[28];
 };
@@ -57,7 +57,7 @@ struct SpGame {
 struct SpBoxRow { char name[20]; char away[12]; char home[12]; };
 
 struct SpDetail {
-  char away[6], home[6];
+  char away[14], home[14];
   int awayScore, homeScore;
   char status[28];
   int awayPer[SP_MAX_PERIODS], homePer[SP_MAX_PERIODS];
@@ -89,26 +89,31 @@ static int spFetchScoreboard(const char *path, const char *dateCompact,
   if (WiFi.status() != WL_CONNECTED) return -1;
   char url[160];
   snprintf(url, sizeof(url),
-           "http://site.api.espn.com/apis/site/v2/sports/%s/scoreboard?dates=%s",
+           "https://site.api.espn.com/apis/site/v2/sports/%s/scoreboard?dates=%s",
            path, dateCompact);
 
   JsonDocument filter;
   filter["events"][0]["id"] = true;
   filter["events"][0]["status"]["type"]["shortDetail"] = true;
   filter["events"][0]["competitions"][0]["competitors"][0]["team"]["abbreviation"] = true;
+  filter["events"][0]["competitions"][0]["competitors"][0]["team"]["displayName"] = true;
   filter["events"][0]["competitions"][0]["competitors"][0]["score"] = true;
   filter["events"][0]["competitions"][0]["competitors"][0]["homeAway"] = true;
 
   HTTPClient http;
   http.begin(url);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setUserAgent("tdeck-pda/1.0");
   http.setTimeout(9000);
   int code = http.GET();
   int n = 0;
+  bool ok = false;
   if (code == 200) {
     JsonDocument doc;
     DeserializationError err =
       deserializeJson(doc, *http.getStreamPtr(), DeserializationOption::Filter(filter));
     if (!err) {
+      ok = true;
       JsonArray evs = doc["events"].as<JsonArray>();
       if (!evs.isNull()) {
         for (JsonObject ev : evs) {
@@ -123,11 +128,13 @@ static int spFetchScoreboard(const char *path, const char *dateCompact,
           if (comps.size() > 0) {
             JsonArray teams = comps[0]["competitors"].as<JsonArray>();
             for (JsonObject c : teams) {
+              const char *dn = c["team"]["displayName"] | "";
               const char *ab = c["team"]["abbreviation"] | "?";
+              if (!dn || !dn[0]) dn = ab;
               int score = String((const char*)(c["score"] | "0")).toInt();
               bool isHome = String((const char*)(c["homeAway"] | "away")) == "home";
-              if (isHome) { strlcpy(g.home, ab ? ab : "?", sizeof(g.home)); g.homeScore = score; }
-              else        { strlcpy(g.away, ab ? ab : "?", sizeof(g.away)); g.awayScore = score; }
+              if (isHome) { strlcpy(g.home, dn, sizeof(g.home)); g.homeScore = score; }
+              else        { strlcpy(g.away, dn, sizeof(g.away)); g.awayScore = score; }
             }
           }
           n++;
@@ -136,7 +143,7 @@ static int spFetchScoreboard(const char *path, const char *dateCompact,
     }
   }
   http.end();
-  return n;
+  return ok ? n : -1;
 }
 
 // count games (+ live count) for a league/date without keeping payloads;
@@ -146,20 +153,24 @@ static int spCountGames(const char *path, const char *dateCompact, int &nLiveOut
   if (WiFi.status() != WL_CONNECTED) return -1;
   char url[160];
   snprintf(url, sizeof(url),
-           "http://site.api.espn.com/apis/site/v2/sports/%s/scoreboard?dates=%s",
+           "https://site.api.espn.com/apis/site/v2/sports/%s/scoreboard?dates=%s",
            path, dateCompact);
   JsonDocument filter;
   filter["events"][0]["status"]["type"]["state"] = true;
   HTTPClient http;
   http.begin(url);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setUserAgent("tdeck-pda/1.0");
   http.setTimeout(6000);
   int code = http.GET();
   int n = 0;
+  bool ok = false;
   if (code == 200) {
     JsonDocument doc;
     DeserializationError err =
       deserializeJson(doc, *http.getStreamPtr(), DeserializationOption::Filter(filter));
     if (!err) {
+      ok = true;
       JsonArray evs = doc["events"].as<JsonArray>();
       if (!evs.isNull()) {
         for (JsonObject ev : evs) {
@@ -171,7 +182,27 @@ static int spCountGames(const char *path, const char *dateCompact, int &nLiveOut
     }
   }
   http.end();
-  return n;
+  return ok ? n : -1;
+}
+
+// background fetch of today's per-league game/live counts so the league
+// picker opens instantly and fills counts in as they arrive
+static volatile int spCounts[N_LEAGUES];
+static volatile int spLive[N_LEAGUES];
+static volatile uint32_t spCountsGen = 0;
+static volatile bool spCountsBusy = false;
+
+static void spCountsTask(void *pv) {
+  char dateCompact[12];
+  spDateCompact(0, dateCompact, sizeof(dateCompact));
+  for (int i = 0; i < N_LEAGUES; i++) {
+    int live = 0;
+    spCounts[i] = spCountGames(leagues[i].path, dateCompact, live);
+    spLive[i] = live;
+    spCountsGen++;
+  }
+  spCountsBusy = false;
+  vTaskDelete(NULL);
 }
 
 // ---------- summary / box score fetch ----------
@@ -181,13 +212,14 @@ static void spFetchDetail(const char *path, const char *eventId, SpDetail &d) {
   if (WiFi.status() != WL_CONNECTED) return;
   char url[192];
   snprintf(url, sizeof(url),
-           "http://site.api.espn.com/apis/site/v2/sports/%s/summary?event=%s",
+           "https://site.api.espn.com/apis/site/v2/sports/%s/summary?event=%s",
            path, eventId);
 
   JsonDocument filter;
   // header: line scores per period + scores/status
   filter["header"]["competitions"][0]["status"]["type"]["shortDetail"] = true;
   filter["header"]["competitions"][0]["competitors"][0]["team"]["abbreviation"] = true;
+  filter["header"]["competitions"][0]["competitors"][0]["team"]["displayName"] = true;
   filter["header"]["competitions"][0]["competitors"][0]["score"] = true;
   filter["header"]["competitions"][0]["competitors"][0]["homeAway"] = true;
   filter["header"]["competitions"][0]["competitors"][0]["linescores"][0]["value"] = true;
@@ -198,6 +230,8 @@ static void spFetchDetail(const char *path, const char *eventId, SpDetail &d) {
 
   HTTPClient http;
   http.begin(url);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setUserAgent("tdeck-pda/1.0");
   http.setTimeout(9000);
   int code = http.GET();
   if (code == 200) {
@@ -213,11 +247,13 @@ static void spFetchDetail(const char *path, const char *eventId, SpDetail &d) {
       if (sd) strlcpy(d.status, sd, sizeof(d.status));
       JsonArray teams = comps[0]["competitors"].as<JsonArray>();
       for (JsonObject c : teams) {
+        const char *dn = c["team"]["displayName"] | "";
         const char *ab = c["team"]["abbreviation"] | "?";
+        if (!dn || !dn[0]) dn = ab;
         int score = String((const char*)(c["score"] | "0")).toInt();
         bool isHome = String((const char*)(c["homeAway"] | "away")) == "home";
-        if (isHome) { strlcpy(d.home, ab, sizeof(d.home)); d.homeScore = score; }
-        else        { strlcpy(d.away, ab, sizeof(d.away)); d.awayScore = score; }
+        if (isHome) { strlcpy(d.home, dn, sizeof(d.home)); d.homeScore = score; }
+        else        { strlcpy(d.away, dn, sizeof(d.away)); d.awayScore = score; }
         int *dst = isHome ? d.homePer : d.awayPer;
         JsonArray ls = c["linescores"].as<JsonArray>();
         int cnt = 0;
@@ -283,23 +319,16 @@ static void spDrawMsg(const char *l1, const char *l2) {
 static int spLeaguePicker(int startSel) {
   int sel = startSel;
   bool needsRedraw = true;
-  // cached per-league game/live counts for today (fetched once per app entry)
-  static int counts[N_LEAGUES];
-  static int nLive[N_LEAGUES];
-  static bool countsFetched = false;
-  if (!countsFetched) {
-    for (int i = 0; i < N_LEAGUES; i++) { counts[i] = -1; nLive[i] = 0; }
-    if (WiFi.status() == WL_CONNECTED) {
-      char dateCompact[12];
-      spDateCompact(0, dateCompact, sizeof(dateCompact));
-      for (int i = 0; i < N_LEAGUES; i++) {
-        counts[i] = spCountGames(leagues[i].path, dateCompact, nLive[i]);
-        needsRedraw = true;
-      }
-    }
-    countsFetched = true;
+  // kick off a background refresh of counts (never blocks the UI)
+  if (WiFi.status() == WL_CONNECTED && !spCountsBusy) {
+    for (int i = 0; i < N_LEAGUES; i++) { spCounts[i] = -2; spLive[i] = 0; }
+    spCountsGen = 0;
+    spCountsBusy = true;
+    xTaskCreate(spCountsTask, "spcnt", 10240, NULL, 1, NULL);
   }
+  uint32_t lastGen = spCountsGen;
   while (true) {
+    if (spCountsGen != lastGen) { lastGen = spCountsGen; needsRedraw = true; }
     if (needsRedraw) {
       needsRedraw = false;
       gfx->fillScreen(BLACK);
@@ -324,16 +353,18 @@ static int spLeaguePicker(int startSel) {
         gfx->print(leagues[top + i].name);
         // right column: games today / live games
         char cb[16];
-        if (counts[top + i] < 0) snprintf(cb, sizeof(cb), " --");
-        else if (nLive[top + i] > 0) snprintf(cb, sizeof(cb), " %d (%d live)", counts[top + i], nLive[top + i]);
-        else snprintf(cb, sizeof(cb), " %d gm", counts[top + i]);
+        int cnt = spCounts[top + i];
+        if (cnt == -2) snprintf(cb, sizeof(cb), " ..");
+        else if (cnt < 0) snprintf(cb, sizeof(cb), " --");
+        else if (spLive[top + i] > 0) snprintf(cb, sizeof(cb), " %d (%d live)", cnt, spLive[top + i]);
+        else snprintf(cb, sizeof(cb), " %d gm", cnt);
         int cw = strlen(cb) * 6;
         gfx->setCursor(SCREEN_W - 8 - cw, y);
         gfx->print(cb);
       }
     }
     InputEventP e;
-    if (!pdaGetInput(e, 50)) continue;
+    if (!pdaGetInput(e, 20)) continue;
     if (e.ev == PDA_EV_UP && sel > 0) { sel--; needsRedraw = true; }
     else if (e.ev == PDA_EV_DOWN && sel < N_LEAGUES - 1) { sel++; needsRedraw = true; }
     else if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) return sel;
@@ -357,7 +388,7 @@ static void spGameDetail(const char *path, SpGame &g) {
     if (needsRedraw) {
       needsRedraw = false;
       gfx->fillScreen(BLACK);
-      gfx->setTextSize(2);
+      gfx->setTextSize(1);
       gfx->setTextColor(TERM_GREEN, BLACK);
       gfx->setCursor(8, 6);
       gfx->printf("%s %d - %s %d", d.away, d.awayScore, d.home, d.homeScore);
@@ -478,7 +509,7 @@ void sportsApp() {
               gfx->setTextColor(BLACK, TERM_SEL_BG);
             } else gfx->setTextColor(TERM_BRIGHT, BLACK);
             gfx->setCursor(10, yy);
-            gfx->printf("%s %2d  %s %2d  %s",
+            gfx->printf("%-13s%2d %-13s%2d %s",
                         games[top + i].away, games[top + i].awayScore,
                         games[top + i].home, games[top + i].homeScore,
                         games[top + i].status);

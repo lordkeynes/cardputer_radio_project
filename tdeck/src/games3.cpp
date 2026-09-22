@@ -226,12 +226,71 @@ static void bsAutoPlace(Battleship &b, int grid) {
 }
 
 static void bsReset(Battleship &b) {
+  memset(b.ships[0], 0, sizeof(b.ships[0]));
   memset(b.shots, 0, sizeof(b.shots));
   b.cx = 0; b.cy = 0;
   b.over = false;
-  bsAutoPlace(b, 0);
-  bsAutoPlace(b, 1);
+  bsAutoPlace(b, 1);          // AI fleet; player places their own
   b.playerFleet = 14; b.aiFleet = 14;
+}
+
+static void bsDrawBoard(Battleship &b, int whichShots, int ox, bool revealShips);
+
+// manual ship-placement phase: move cursor, r = rotate, click = place,
+// a = auto-place the rest. Runs until all 5 ships are down.
+static void bsPlacement(Battleship &b) {
+  int shipIdx = 0;
+  bool horiz = true;
+  int ox = (SCREEN_W - BS_N * BS_CELL) / 2;
+  while (shipIdx < 5) {
+    int len = bsShipSizes[shipIdx];
+    bool fits = bsCanPlace(b, 0, b.cx, b.cy, len, horiz);
+    gfx->fillScreen(BLACK);
+    gfx->setTextSize(1);
+    gfx->setTextColor(TERM_GREEN, BLACK);
+    gfx->setCursor(4, 7);
+    gfx->print("Battleship - place fleet");
+    gfx->drawFastHLine(0, 18, SCREEN_W, TERM_DIM);
+    gfx->setTextColor(TERM_ACCENT, BLACK);
+    gfx->setCursor(ox, 26);
+    gfx->printf("ship %d/5: %s (%d)", shipIdx + 1, horiz ? "H" : "V", len);
+    gfx->setTextColor(TERM_DIM, BLACK);
+    gfx->setCursor(4, SCREEN_H - 10);
+    gfx->print("u/d/l/r move r=rotate click=place a=auto Long=quit");
+    bsDrawBoard(b, 1, ox, true);           // player board + ships so far
+    // ghost preview of the ship under the cursor
+    for (int i = 0; i < len; i++) {
+      int nx = horiz ? b.cx + i : b.cx;
+      int ny = horiz ? b.cy : b.cy + i;
+      if (nx >= BS_N || ny >= BS_N) break;
+      gfx->drawRect(ox + nx * BS_CELL + 2, BS_OY + ny * BS_CELL + 2,
+                    BS_CELL - 5, BS_CELL - 5,
+                    fits ? TERM_ACCENT : TERM_RED);
+    }
+    gfx->drawRect(ox + b.cx * BS_CELL, BS_OY + b.cy * BS_CELL,
+                  BS_CELL, BS_CELL, TERM_BRIGHT);
+    InputEventP e;
+    if (!pdaGetInput(e, 50)) continue;
+    if (e.ev == PDA_EV_UP && b.cy > 0) b.cy--;
+    else if (e.ev == PDA_EV_DOWN && b.cy < BS_N - 1) b.cy++;
+    else if (e.ev == PDA_EV_LEFT && b.cx > 0) b.cx--;
+    else if (e.ev == PDA_EV_RIGHT && b.cx < BS_N - 1) b.cx++;
+    else if (e.ev == PDA_EV_CHAR && (e.ch == 'r' || e.ch == 'R')) horiz = !horiz;
+    else if (e.ev == PDA_EV_CHAR && (e.ch == 'a' || e.ch == 'A')) {
+      bsAutoPlace(b, 0);
+      return;
+    }
+    else if ((e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) && fits) {
+      bsPlace(b, 0, b.cx, b.cy, len, horiz, shipIdx + 1);
+      shipIdx++;
+      if (b.cx > 0) b.cx--;
+    }
+    else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) {
+      // back out entirely: auto-place so quitting mid-placement is safe
+      bsAutoPlace(b, 0);
+      return;
+    }
+  }
 }
 
 // draw one board; whichShots: 0 = player's shots on AI fleet, 1 = AI's shots on player fleet
@@ -346,6 +405,7 @@ static void bsAIShoot(Battleship &b) {
 void battleshipApp() {
   Battleship b;
   bsReset(b);
+  bsPlacement(b);
   bool full = true;
   while (true) {
     if (full) { bsDraw(b, true); full = false; }
@@ -354,7 +414,7 @@ void battleshipApp() {
     if (b.over) {
       if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE ||
           (e.ev == PDA_EV_CHAR && (e.ch == 'n' || e.ch == 'N'))) {
-        bsReset(b); full = true;
+        bsReset(b); bsPlacement(b); full = true;
       } else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) return;
       continue;
     }

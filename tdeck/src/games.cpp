@@ -574,15 +574,15 @@ static void drawCard(Arduino_GFX *g, int card, int x, int y, bool selected) {
   // face + border
   g->fillRect(x + 1, y + 1, 28, 38, RGB565(0xf4, 0xf0, 0xe2));
   g->drawRect(x, y, 30, 40, selected ? TERM_ACCENT : RGB565(0x60, 0x60, 0x60));
-  // corner rank + suit
+  // corner rank + suit, spread so they do not overlap
   g->setTextSize(1);
   g->setTextColor(col, RGB565(0xf4, 0xf0, 0xe2));
-  g->setCursor(x + 3, y + 3);
+  g->setCursor(x + 3, y + 2);
   g->print(rankStr(r));
-  drawSuitGlyph(g, su, x + 2, y + 14, col);
+  drawSuitGlyph(g, su, x + 3, y + 10, col);
   // bottom-right inverted mini suit
-  drawSuitGlyph(g, su, x + 21, y + 32, col);
-  g->setCursor(x + 20, y + 28);
+  drawSuitGlyph(g, su, x + 22, y + 30, col);
+  g->setCursor(x + 22, y + 22);
   g->print(rankStr(r));
 }
 

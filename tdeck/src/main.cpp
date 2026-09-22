@@ -24,6 +24,24 @@
 #include "sports.h"
 #include "email.h"
 #include "radio.h"
+#include <Audio.h>
+
+// Shared single-instance audio player (ESP32-audioI2S): used by playback app.
+static Audio *sharedAudioPlayer = NULL;
+static bool audioPlayerInit() {
+  if (sharedAudioPlayer) return true;
+  sharedAudioPlayer = new Audio(false, 3, I2S_NUM_0);
+  return sharedAudioPlayer != NULL;
+}
+static Audio *audioPlayerGet() { return sharedAudioPlayer; }
+static void audioPlayerDeinit() {
+  if (sharedAudioPlayer) {
+    sharedAudioPlayer->stopSong();
+    delete sharedAudioPlayer;
+    sharedAudioPlayer = NULL;
+  }
+}
+static int audioPlayerDefaultVolume() { return 12; }
 
 #define SCREEN_W 320
 #define SCREEN_H 240
@@ -278,8 +296,8 @@ static void drawTitle(const char *title) {
   gfx->setTextSize(1);
 }
 
-// Scrolling menu list geometry: rows of 30px in the area y=30..SCREEN_H-18.
-#define MENU_ROW_H 30
+// Scrolling menu list geometry: compact size-1 rows to match other apps.
+#define MENU_ROW_H 16
 #define MENU_TOP 26
 static int menuVisibleRows() {
   int area = SCREEN_H - 18 - MENU_TOP;
@@ -341,8 +359,8 @@ static void drawMenuList(const char *title, const char *const *items, int n, int
       } else {
         gfx->setTextColor(WHITE, BLACK);
       }
-      gfx->setTextSize(2);
-      gfx->setCursor(8, y);
+      gfx->setTextSize(1);
+      gfx->setCursor(8, y + 2);
       gfx->println(items[i]);
     }
     // Scroll indicators
@@ -366,13 +384,13 @@ static void drawMenuList(const char *title, const char *const *items, int n, int
     int yPrev = itemY(lastSel - top, n);
     int yNew = itemY(sel - top, n);
     gfx->fillRect(0, yPrev - 4, SCREEN_W, itemH(n), BLACK);
-    gfx->setTextSize(2);
+    gfx->setTextSize(1);
     gfx->setTextColor(WHITE, BLACK);
-    gfx->setCursor(8, yPrev);
+    gfx->setCursor(8, yPrev + 2);
     gfx->println(items[lastSel]);
     gfx->fillRect(0, yNew - 4, SCREEN_W, itemH(n), RGB565(0, 120, 255));
     gfx->setTextColor(BLACK, TERM_SEL_BG);
-    gfx->setCursor(8, yNew);
+    gfx->setCursor(8, yNew + 2);
     gfx->println(items[sel]);
   }
   lastTop = top;
@@ -1001,62 +1019,173 @@ void spkBeep(int ms) {
   i2s_driver_uninstall(SPK_I2S_PORT);
 }
 
-static void playbackApp() {
-  String path;
-  if (pickFile("Play recording", REC_DIR, ".wav", path) < 0) return;
-
-  File f = SD.open(path, FILE_READ);
-  if (!f) return;
-  WavHeader hdr;
-  f.readBytes((char *)&hdr, sizeof(hdr));
-
-  i2s_config_t i2s_config = {
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
-    .sample_rate = MIC_SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = 8,
-    .dma_buf_len = 256,
-    .use_apll = false,
-    .tx_desc_auto_clear = true,
-    .fixed_mclk = 0,
-    .mclk_multiple = I2S_MCLK_MULTIPLE_256,
-    .bits_per_chan = I2S_BITS_PER_CHAN_16BIT,
-  };
-  i2s_pin_config_t pins = {};
-  pins.bck_io_num = BOARD_I2S_BCK;
-  pins.ws_io_num = BOARD_I2S_WS;
-  pins.data_out_num = BOARD_I2S_DOUT;
-  pins.data_in_num = I2S_PIN_NO_CHANGE;
-  i2s_driver_install(SPK_I2S_PORT, &i2s_config, 0, NULL);
-  i2s_set_pin(SPK_I2S_PORT, &pins);
-  i2s_zero_dma_buffer(SPK_I2S_PORT);
-
-  drawTitle("Play");
-  gfx->setTextSize(2);
-  gfx->setCursor(8, 40);
-  gfx->println("Playing...");
-  drawStatus("Esc = stop");
-
-  static int16_t playBuf[2048];
-  size_t bytesWritten = 0;
-  bool stop = false;
-  while (f.available() > 0 && !stop) {
-    int n = f.read((uint8_t *)playBuf, sizeof(playBuf));
-    if (n <= 0) break;
-    i2s_write(SPK_I2S_PORT, playBuf, n, &bytesWritten, portMAX_DELAY);
-    InputEvent e;
-    while (xQueueReceive(inputQueue, &e, 0) == pdTRUE) {
-      if (e.ev == EV_BACK || e.ev == EV_SELECT || e.ev == EV_NEWLINE) stop = true;
+// pick an audio file from any folder: shows /recordings + /radio first
+static bool pickAudioFile(String &outPath) {
+  const char *folders[] = {REC_DIR, "/radio/rec"};
+  const char *labels[] = {"Recordings", "Radio recordings"};
+  String names[2][MAX_FILES];
+  int counts[2] = {0, 0};
+  for (int d = 0; d < 2; d++) {
+    File root = SD.open(folders[d]);
+    if (root && root.isDirectory()) {
+      File f = root.openNextFile();
+      while (f && counts[d] < MAX_FILES) {
+        String nm = f.name();
+        if (!f.isDirectory() && (nm.endsWith(".wav") || nm.endsWith(".mp3"))) {
+          String shortNm = nm;
+          int slash = shortNm.lastIndexOf('/');
+          if (slash >= 0) shortNm = shortNm.substring(slash + 1);
+          names[d][counts[d]++] = String(folders[d]) + "/" + shortNm;
+        }
+        f.close();
+        f = root.openNextFile();
+      }
+      root.close();
     }
   }
-  i2s_zero_dma_buffer(SPK_I2S_PORT);
-  i2s_driver_uninstall(SPK_I2S_PORT);
-  f.close();
-  drawStatus("Done");
-  delay(1000);
+  int total = counts[0] + counts[1];
+  if (total == 0) return false;
+  // flat picker across both folders (section headers skipped; simple list)
+  const int visible = 12;
+  int sel = 0, scroll = 0;
+  bool needsRedraw = true;
+  while (true) {
+    if (needsRedraw) {
+      needsRedraw = false;
+      drawTitle("Play");
+      gfx->setTextSize(1);
+      int y = 30;
+      for (int d = 0; d < 2; d++) {
+        if (counts[d] == 0) continue;
+        gfx->setTextColor(TERM_DIM, BLACK);
+        gfx->setCursor(6, y);
+        gfx->println(labels[d]);
+        y += 13;
+        int startIdx = (d == 0) ? 0 : counts[0];
+        for (int i = 0; i < counts[d]; i++) {
+          int idx = startIdx + i;
+          if (idx < scroll || idx >= scroll + visible) continue;
+          int row = idx - scroll;
+          int yy = 30 + 14 + row * 14;   // approximate; fine for <24 items
+          if (idx == sel) {
+            gfx->fillRect(0, yy - 2, SCREEN_W, 13, RGB565(0, 120, 255));
+            gfx->setTextColor(BLACK, TERM_SEL_BG);
+          } else gfx->setTextColor(WHITE, BLACK);
+          gfx->setCursor(6, yy);
+          gfx->println(baseName(names[d][i]));
+        }
+        y += counts[d] * 14 + 4;
+      }
+      gfx->setTextColor(WHITE, BLACK);
+      gfx->setCursor(4, SCREEN_H - 10);
+      gfx->println("Click = play  Long-click = back");
+    }
+    InputEvent e;
+    if (!getInput(e, 50)) continue;
+    if (e.ev == EV_UP && sel > 0) { sel--; needsRedraw = true; }
+    else if (e.ev == EV_DOWN && sel < total - 1) { sel++; needsRedraw = true; }
+    else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
+      int d = (sel < counts[0]) ? 0 : 1;
+      int i = (d == 0) ? sel : sel - counts[0];
+      if (i >= 0 && i < counts[d]) {
+        outPath = names[d][i];
+        return true;
+      }
+    } else if (e.ev == EV_BACK || e.ev == EV_LEFT || e.ev == EV_LONGSELECT) return false;
+    // keep selection visible
+    if (sel < scroll) scroll = sel;
+    if (sel >= scroll + visible) scroll = sel - visible + 1;
+  }
+}
+
+static void playbackApp() {
+  String path;
+  if (!pickAudioFile(path)) return;
+  if (!audioPlayerInit()) {
+    drawTitle("Play");
+    gfx->setTextSize(1);
+    gfx->setTextColor(TERM_RED, BLACK);
+    gfx->setCursor(8, 40);
+    gfx->println("Audio init failed");
+    delay(1000);
+    return;
+  }
+  Audio *a = audioPlayerGet();
+  a->setPinout(BOARD_I2S_BCK, BOARD_I2S_WS, BOARD_I2S_DOUT);
+  int vol = audioPlayerDefaultVolume();
+  a->setVolume(vol);
+  if (!a->connecttoFS(SD, path.c_str())) {
+    drawTitle("Play");
+    gfx->setTextSize(1);
+    gfx->setTextColor(TERM_RED, BLACK);
+    gfx->setCursor(8, 40);
+    gfx->println("Cannot open file");
+    audioPlayerDeinit();
+    delay(1000);
+    return;
+  }
+  bool playing = true, paused = false;
+  bool needsRedraw = true;
+  uint32_t lastDraw = 0;
+  while (playing) {
+    a->loop();
+    if (millis() - lastDraw > 250 || needsRedraw) {
+      needsRedraw = false;
+      lastDraw = millis();
+      uint32_t dur = a->getAudioFileDuration();
+      uint32_t cur = a->getAudioCurrentTime();
+      if (cur >= dur) { playing = false; break; }
+      gfx->fillScreen(BLACK);
+      drawTitleBarIndicators();
+      gfx->setTextSize(1);
+      gfx->setTextColor(TERM_GREEN, BLACK);
+      gfx->setCursor(4, 7);
+      gfx->print("Play");
+      gfx->drawFastHLine(0, 18, SCREEN_W, TERM_DIM);
+      gfx->setTextSize(1);
+      gfx->setTextColor(WHITE, BLACK);
+      gfx->setCursor(8, 30);
+      gfx->println(baseName(path));
+      // time mm:ss / mm:ss
+      char tbuf[24];
+      snprintf(tbuf, sizeof(tbuf), "%02u:%02u / %02u:%02u",
+               (unsigned)(cur / 60), (unsigned)(cur % 60),
+               (unsigned)(dur / 60), (unsigned)(dur % 60));
+      gfx->setTextColor(TERM_BRIGHT, BLACK);
+      gfx->setCursor(8, 46);
+      gfx->println(tbuf);
+      // progress bar
+      int barW = SCREEN_W - 32;
+      int frac = dur ? (int)(cur * barW / dur) : 0;
+      if (frac > barW) frac = barW;
+      gfx->drawRect(14, 64, barW + 2, 12, TERM_DIM);
+      gfx->fillRect(16, 66, frac, 8, TERM_GREEN);
+      // volume bar
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(8, 88);
+      gfx->print("vol ");
+      for (int i = 0; i < 21; i++)
+        gfx->fillRect(40 + i * 6, 88, 4, 8, i < vol ? TERM_GREEN : TERM_DIM);
+      gfx->setTextColor(paused ? TERM_ACCENT : TERM_GREEN, BLACK);
+      gfx->setCursor(8, 106);
+      gfx->println(paused ? "PAUSED" : "PLAYING");
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(4, SCREEN_H - 10);
+      gfx->println("l/r=vol u=pause Esc=stop");
+    }
+    InputEvent e;
+    while (xQueueReceive(inputQueue, &e, 0) == pdTRUE) {
+      if (e.ev == EV_BACK || e.ev == EV_LONGSELECT) playing = false;
+      else if (e.ev == EV_LEFT && vol > 0) { vol--; a->setVolume(vol); needsRedraw = true; }
+      else if (e.ev == EV_RIGHT && vol < 21) { vol++; a->setVolume(vol); needsRedraw = true; }
+      else if (e.ev == EV_UP || e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
+        paused = !paused;
+        a->pauseResume();
+        needsRedraw = true;
+      }
+    }
+  }
+  audioPlayerDeinit();
 }
 
 // ---------- Icon launcher ----------

@@ -483,6 +483,10 @@ struct Doodle {
   int score;
   bool over;
   uint32_t lastStep;
+  // previous-frame screen positions for flicker-free erase
+  int prevPX, prevPY;                 // player
+  float prevPlatSX[DJ_NPLAT][2];      // platforms
+  bool prevValid;
 };
 
 static void djGenPlat(Doodle &d, int i, float minSep, float maxSep) {
@@ -498,6 +502,7 @@ static void djReset(Doodle &d) {
   memset(&d, 0, sizeof(d));
   d.x = SCREEN_W / 2;
   d.y = 200;
+  d.prevValid = false;
   d.vy = 0;
   d.camY = 0;
   // platform 0: starting platform right under player
@@ -526,16 +531,28 @@ static void djDraw(Doodle &d, bool full) {
     gfx->setCursor(4, SCREEN_H - 10);
     gfx->print("< > move  BK exit");
   }
-  // clear play field (below title bar, above hint bar)
-  gfx->fillRect(0, 19, SCREEN_W, SCREEN_H - 30, RGB565(0x0c, 0x14, 0x0c));
+  const uint16_t BG = RGB565(0x0c, 0x14, 0x0c);
+  if (full || !d.prevValid) {
+    gfx->fillRect(0, 19, SCREEN_W, SCREEN_H - 30, BG);
+  } else {
+    // erase only what moved last frame: player + platforms
+    gfx->fillRect(d.prevPX - 7, d.prevPY - 7, 15, 16, BG);
+    for (int i = 0; i < DJ_NPLAT; i++) {
+      float sy = d.prevPlatSX[i][1];
+      if (sy < 14 || sy > SCREEN_H + 4) continue;
+      gfx->fillRect((int)d.prevPlatSX[i][0] - 1, (int)sy - 1, DJ_PW + 2, 7, BG);
+    }
+  }
   // score top-right
   snprintf(buf, sizeof(buf), "h %d", d.score);
   gfx->fillRect(260, 4, 56, 10, RGB565(0x0c, 0x14, 0x0c));
   gfx->setCursor(260, 7);
   gfx->print(buf);
-  // platforms (world y -> screen y = worldY - camY)
+  // platforms (world y -> screen y = worldY - camY); record screen pos
   for (int i = 0; i < DJ_NPLAT; i++) {
     float sy = d.plats[i][1] - d.camY;
+    d.prevPlatSX[i][0] = d.plats[i][0];
+    d.prevPlatSX[i][1] = sy;
     if (sy < 18 || sy > SCREEN_H - 2) continue;
     gfx->fillRect((int)d.plats[i][0], (int)sy, DJ_PW, 4, TERM_GREEN);
   }
@@ -546,6 +563,9 @@ static void djDraw(Doodle &d, bool full) {
   gfx->fillCircle(px + 2, py - 2, 1, RGB565(0, 0, 0));
   gfx->fillRect(px - 4, py + 5, 3, 3, TERM_GREEN);
   gfx->fillRect(px + 1, py + 5, 3, 3, TERM_GREEN);
+  d.prevPX = px;
+  d.prevPY = py;
+  d.prevValid = true;
 }
 
 static void djShiftUp(Doodle &d) {

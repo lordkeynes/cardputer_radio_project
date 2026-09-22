@@ -175,14 +175,76 @@ static void chessAiMove(Chess &g) {
   }
 }
 
+// Draw stylized chess pieces with vector shapes inside an sz x sz square.
+// White pieces: cream fill + dark outline; black pieces: dark fill + light edge.
 static void drawPiece(Arduino_GFX *g, char p, int x, int y, int sz) {
-  // 5x7-ish block font for pieces, drawn with rects
-  g->setTextSize(1);
-  if (isWhitePiece(p)) g->setTextColor(TERM_GREEN, BLACK);
-  else g->setTextColor(TERM_DIM, BLACK);
-  g->setCursor(x + 2, y + 2);
-  char u = isWhitePiece(p) ? p : (p - 32);
-  g->print(u);
+  bool white = isWhitePiece(p);
+  char u = white ? p : (char)(p - 32);
+  uint16_t fill = white ? RGB565(0xf0, 0xe6, 0xd0) : RGB565(0x28, 0x30, 0x28);
+  uint16_t edge = white ? RGB565(0x30, 0x28, 0x18) : RGB565(0xa8, 0xb8, 0xa0);
+  int cx = x + sz / 2;
+  int by = y + sz - 4;              // baseline for the base bar
+  auto base = [&]() {
+    g->fillRect(cx - sz / 2 + 3, by, sz - 6, 3, fill);
+    g->drawRect(cx - sz / 2 + 3, by, sz - 6, 3, edge);
+  };
+  switch (u) {
+    case 'P':  // pawn: ball head, tapered collar, base
+      g->fillCircle(cx, y + sz / 4 + 2, sz / 6 + 1, fill);
+      g->drawCircle(cx, y + sz / 4 + 2, sz / 6 + 1, edge);
+      g->fillRect(cx - 3, y + sz / 2, 6, sz / 4, fill);
+      g->drawRect(cx - 3, y + sz / 2, 6, sz / 4, edge);
+      base();
+      break;
+    case 'R':  // rook: crenellated top, blocky body
+      g->fillRect(cx - 5, y + 3, 10, 4, fill);
+      g->drawRect(cx - 5, y + 3, 10, 4, edge);
+      g->fillRect(cx - 4, y + 7, 8, sz / 2 - 2, fill);
+      g->drawRect(cx - 4, y + 7, 8, sz / 2 - 2, edge);
+      base();
+      break;
+    case 'N':  // knight: horse-head silhouette
+      g->fillTriangle(cx - 5, by - 2, cx + 5, by - 2, cx - 2, y + 8, fill);
+      g->drawTriangle(cx - 5, by - 2, cx + 5, by - 2, cx - 2, y + 8, edge);
+      g->fillCircle(cx + 1, y + 7, 4, fill);
+      g->drawCircle(cx + 1, y + 7, 4, edge);
+      g->fillRect(cx + 3, y + 5, 5, 3, fill);
+      g->drawRect(cx + 3, y + 5, 5, 3, edge);
+      base();
+      break;
+    case 'B':  // bishop: mitre with slit
+      g->fillCircle(cx, y + sz / 2, 5, fill);
+      g->drawCircle(cx, y + sz / 2, 5, edge);
+      g->fillCircle(cx, y + sz / 3, 3, fill);
+      g->drawCircle(cx, y + sz / 3, 3, edge);
+      g->drawLine(cx - 2, y + sz / 3 - 1, cx + 2, y + sz / 3 + 2, edge);
+      g->fillRect(cx - 1, y + 3, 2, 3, fill);
+      base();
+      break;
+    case 'Q':  // queen: coronet with 3 points
+      g->fillCircle(cx - 5, y + 8, 2, fill);
+      g->fillCircle(cx, y + 6, 2, fill);
+      g->fillCircle(cx + 5, y + 8, 2, fill);
+      g->fillTriangle(cx - 6, y + 10, cx + 6, y + 10, cx, y + 4, fill);
+      g->drawTriangle(cx - 6, y + 10, cx + 6, y + 10, cx, y + 4, edge);
+      g->fillRect(cx - 5, y + 10, 10, sz / 4, fill);
+      g->drawRect(cx - 5, y + 10, 10, sz / 4, edge);
+      base();
+      break;
+    case 'K':  // king: cross + crown body
+      g->fillRect(cx - 1, y + 2, 2, 6, fill);
+      g->fillRect(cx - 3, y + 4, 6, 2, fill);
+      g->fillRect(cx - 5, y + 9, 10, sz / 3, fill);
+      g->drawRect(cx - 5, y + 9, 10, sz / 3, edge);
+      base();
+      break;
+    default:   // fallback: letter
+      g->setTextSize(1);
+      g->setTextColor(white ? TERM_GREEN : TERM_DIM, BLACK);
+      g->setCursor(x + 2, y + 2);
+      g->print(u);
+      break;
+  }
 }
 
 static void chessDraw(Chess &g) {
@@ -1245,11 +1307,15 @@ static void (*const gameRun[])(void) = {
 static void drawGameIcon(int idx, int x, int y) {
   uint16_t c = TERM_GREEN, d = TERM_DIM;
   switch (idx) {
-    case 0:  // Chess: pawn
-      gfx->fillCircle(x + 12, y + 8, 3, c);
-      gfx->fillRect(x + 9, y + 12, 6, 4, c);
-      gfx->fillRect(x + 7, y + 17, 10, 3, c);
+    case 0: {  // Chess: knight silhouette
+      gfx->fillTriangle(x + 6, y + 18, x + 18, y + 18, x + 12, y + 14, c);  // base
+      gfx->fillRect(x + 8, y + 15, 8, 3, c);
+      gfx->fillTriangle(x + 7, y + 15, x + 14, y + 15, x + 10, y + 6, c);  // neck
+      gfx->fillCircle(x + 12, y + 5, 3, c);                                 // head
+      gfx->fillRect(x + 13, y + 4, 4, 2, c);                                // muzzle
+      gfx->fillRect(x + 9, y + 3, 2, 3, c);                                 // ear
       break;
+    }
     case 1:  // Go: 5x5 board + stones
       gfx->drawRect(x + 4, y + 4, 16, 16, c);
       for (int i = 0; i < 4; i++) {
@@ -1266,13 +1332,18 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->drawRect(x + 8, y + 9, 11, 15, c);
       gfx->fillCircle(x + 13, y + 16, 2, TERM_ACCENT);
       break;
-    case 3:  // Checkers: board + 2 men
-      for (int r = 0; r < 5; r++)
+    case 3: {  // Checkers: angled board + kinged piece with crown
+      gfx->drawRect(x + 2, y + 4, 20, 16, c);
+      for (int r = 0; r < 4; r++)
         for (int q = 0; q < 5; q++)
-          if ((r + q) % 2) gfx->fillRect(x + 3 + q * 4, y + 3 + r * 4, 4, 4, d);
-      gfx->fillCircle(x + 9, y + 9, 2, TERM_BRIGHT);
-      gfx->fillCircle(x + 17, y + 13, 2, c);
+          if ((r + q) % 2) gfx->fillRect(x + 3 + q * 4, y + 5 + r * 4, 3, 3, d);
+      gfx->fillCircle(x + 8, y + 8, 3, TERM_BRIGHT);
+      gfx->fillCircle(x + 16, y + 16, 3, TERM_BRIGHT);
+      gfx->fillRect(x + 14, y + 13, 5, 2, TERM_ACCENT);   // crown bar
+      gfx->fillRect(x + 14, y + 11, 2, 2, TERM_ACCENT);
+      gfx->fillRect(x + 17, y + 11, 2, 2, TERM_ACCENT);
       break;
+    }
     case 4:  // Snake: S body + food
       gfx->drawFastHLine(x + 5, y + 6, 12, TERM_BRIGHT);
       gfx->drawFastVLine(x + 17, y + 6, 7, TERM_BRIGHT);
@@ -1363,40 +1434,47 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->drawRect(x + 3, y + 22, 18, 2, c);
       break;
     }
-    case 14: {  // Battleship: ship + crosshair
-      gfx->drawFastHLine(x + 3, y + 14, 18, c);
-      gfx->fillRect(x + 8, y + 10, 8, 4, c);
-      gfx->fillRect(x + 10, y + 7, 4, 3, c);
-      gfx->drawLine(x + 2, y + 3, x + 6, y + 7, TERM_BRIGHT);
-      gfx->drawLine(x + 6, y + 3, x + 2, y + 7, TERM_BRIGHT);
+    case 14: {  // Battleship: hull + superstructure + guns on waves
+      // waves
+      for (int i = 0; i < 3; i++) gfx->drawFastHLine(x + 1 + (i % 2) * 2, y + 18 + i * 2, 20 - (i % 2) * 4, d);
+      // hull (pointed bow right)
+      gfx->fillRect(x + 3, y + 13, 14, 4, c);
+      gfx->fillTriangle(x + 17, y + 13, x + 21, y + 15, x + 17, y + 17, c);
+      // deck + bridge
+      gfx->fillRect(x + 5, y + 10, 10, 3, c);
+      gfx->fillRect(x + 8, y + 6, 4, 4, c);
+      // fore gun barrel
+      gfx->fillRect(x + 15, y + 8, 6, 2, TERM_BRIGHT);
+      // smokestack
+      gfx->fillRect(x + 10, y + 2, 2, 4, TERM_BRIGHT);
       break;
     }
-    case 15: {  // Wordle: guess row, middle tile "hit"
+    case 15: {  // Wordle: green HIT tile with a letter inside
+      const uint16_t HIT = RGB565(0x2f, 0xd0, 0x50);
       for (int i = 0; i < 5; i++) {
         int tx = x + 1 + i * 5;
-        if (i == 2) {
-          gfx->fillRect(tx, y + 8, 4, 9, TERM_BRIGHT);
-        } else if (i == 1) {
-          gfx->fillRect(tx, y + 8, 4, 9, TERM_ACCENT);
-        } else if (i == 3) {
-          gfx->drawRect(tx, y + 8, 4, 9, TERM_ACCENT);
-        } else {
-          gfx->drawRect(tx, y + 8, 4, 9, d);
-        }
+        if (i == 2) gfx->fillRect(tx, y + 7, 4, 10, HIT);
+        else gfx->drawRect(tx, y + 7, 4, 10, d);
       }
-      // small keyboard hint below
-      gfx->drawFastHLine(x + 3, y + 20, 18, d);
+      gfx->setTextSize(1);
+      gfx->setTextColor(BLACK, HIT);
+      gfx->setCursor(x + 10, y + 10);
+      gfx->print("A");
       break;
     }
-    case 16: {  // Sudoku: 3x3 grid with digits
-      gfx->drawRect(x + 4, y + 4, 16, 16, c);
-      gfx->drawFastVLine(x + 9, y + 4, 16, d);
-      gfx->drawFastVLine(x + 15, y + 4, 16, d);
-      gfx->drawFastHLine(x + 4, y + 9, 16, d);
-      gfx->drawFastHLine(x + 4, y + 15, 16, d);
-      gfx->fillRect(x + 6, y + 6, 2, 2, TERM_BRIGHT);
-      gfx->fillRect(x + 11, y + 11, 2, 2, TERM_BRIGHT);
-      gfx->fillRect(x + 16, y + 16, 2, 2, TERM_BRIGHT);
+    case 16: {  // Sudoku: 9x9 mini grid + a few givens
+      gfx->drawRect(x + 3, y + 3, 18, 18, c);
+      for (int i = 1; i < 3; i++) {
+        gfx->drawFastVLine(x + 3 + i * 6, y + 3, 18, d);
+        gfx->drawFastHLine(x + 3, y + 3 + i * 6, 18, d);
+      }
+      gfx->setTextSize(1);
+      gfx->setTextColor(TERM_BRIGHT, BLACK);
+      gfx->setCursor(x + 5, y + 5);  gfx->print("5");
+      gfx->setCursor(x + 11, y + 5); gfx->print("3");
+      gfx->setCursor(x + 5, y + 17); gfx->print("4");
+      gfx->setCursor(x + 17, y + 11); gfx->print("7");
+      gfx->setCursor(x + 11, y + 17); gfx->print("8");
       break;
     }
     case 17: {  // Sokoban: box + target
@@ -1406,13 +1484,18 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->drawCircle(x + 6, y + 7, 2, TERM_BRIGHT);
       break;
     }
-    case 18: {  // Invaders: alien + ship
-      gfx->fillRect(x + 6, y + 4, 12, 3, c);
-      gfx->fillRect(x + 4, y + 7, 16, 3, c);
-      gfx->fillRect(x + 6, y + 10, 3, 2, c);
-      gfx->fillRect(x + 15, y + 10, 3, 2, c);
-      gfx->fillRect(x + 10, y + 18, 4, 2, TERM_BRIGHT);
-      gfx->fillRect(x + 8, y + 20, 8, 2, TERM_BRIGHT);
+    case 18: {  // Invaders: classic crab alien (sprite-accurate)
+      gfx->fillRect(x + 6, y + 3, 3, 2, c);    // antennae
+      gfx->fillRect(x + 15, y + 3, 3, 2, c);
+      gfx->fillRect(x + 4, y + 5, 16, 4, c);   // head row
+      gfx->fillRect(x + 2, y + 7, 4, 2, c);    // eyes out
+      gfx->fillRect(x + 18, y + 7, 4, 2, c);
+      gfx->fillRect(x + 2, y + 9, 2, 4, c);    // side arms
+      gfx->fillRect(x + 20, y + 9, 2, 4, c);
+      gfx->fillRect(x + 4, y + 11, 16, 5, c);  // body
+      gfx->fillRect(x + 7, y + 16, 2, 4, c);   // legs
+      gfx->fillRect(x + 11, y + 16, 2, 4, c);
+      gfx->fillRect(x + 15, y + 16, 2, 4, c);
       break;
     }
     case 19: {  // Asteroids: ship + rocks
@@ -1430,18 +1513,30 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->fillRect(x + 5, y + 17, 14, 3, c);
       break;
     }
-    case 21: {  // Hearts: heart shape
-      gfx->fillCircle(x + 8, y + 9, 4, TERM_RED);
-      gfx->fillCircle(x + 16, y + 9, 4, TERM_RED);
-      for (int i = 0; i < 7; i++)
-        gfx->fillRect(x + 4 + i, y + 12 + i, 17 - 2 * i, 1, TERM_RED);
+    case 21: {  // Hearts: playing card with heart pip
+      gfx->fillRect(x + 4, y + 3, 15, 18, RGB565(0xe8, 0xf0, 0xe8));
+      gfx->drawRect(x + 4, y + 3, 15, 18, TERM_GREEN);
+      gfx->fillCircle(x + 8, y + 9, 3, TERM_RED);
+      gfx->fillCircle(x + 15, y + 9, 3, TERM_RED);
+      for (int i = 0; i < 5; i++)
+        gfx->fillRect(x + 7 + i, y + 11 + i, 9 - 2 * i, 1, TERM_RED);
+      gfx->setTextSize(1);
+      gfx->setTextColor(TERM_RED, RGB565(0xe8, 0xf0, 0xe8));
+      gfx->setCursor(x + 6, y + 16);
+      gfx->print("H");
       break;
     }
-    case 22: {  // Spades: spade shape
-      gfx->fillCircle(x + 9, y + 10, 5, c);
-      gfx->fillCircle(x + 15, y + 10, 5, c);
-      gfx->fillTriangle(x + 12, y + 5, x + 5, y + 14, x + 19, y + 14, c);
-      gfx->fillTriangle(x + 8, y + 16, x + 16, y + 16, x + 12, y + 22, c);
+    case 22: {  // Spades: playing card with spade pip
+      gfx->fillRect(x + 4, y + 3, 15, 18, RGB565(0xe8, 0xf0, 0xe8));
+      gfx->drawRect(x + 4, y + 3, 15, 18, TERM_GREEN);
+      gfx->fillCircle(x + 9, y + 10, 3, RGB565(0x10, 0x10, 0x10));
+      gfx->fillCircle(x + 14, y + 10, 3, RGB565(0x10, 0x10, 0x10));
+      gfx->fillTriangle(x + 11, y + 4, x + 6, y + 13, x + 17, y + 13, RGB565(0x10, 0x10, 0x10));
+      gfx->fillTriangle(x + 8, y + 15, x + 15, y + 15, x + 11, y + 20, RGB565(0x10, 0x10, 0x10));
+      gfx->setTextSize(1);
+      gfx->setTextColor(BLACK, RGB565(0xe8, 0xf0, 0xe8));
+      gfx->setCursor(x + 6, y + 16);
+      gfx->print("S");
       break;
     }
     case 23: {  // Backgammon: dice + triangle board

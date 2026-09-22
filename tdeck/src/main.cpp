@@ -479,6 +479,8 @@ static void mapScanTiles() {
     bestZoom = z;
     bestX = (uint32_t)((minX + maxX) / 2);
     bestY = (uint32_t)((minY + maxY) / 2);
+    Serial.printf("[map] z%d: x %ld..%ld y %ld..%ld\n",
+                  z, minX, maxX, minY, maxY);
     break;
   }
   if (bestZoom > 0) {
@@ -1191,6 +1193,7 @@ static void playbackApp() {
 
 // ---------- Icon launcher ----------
 
+static void chargeMode();
 static void batteryScreen() {
   gfx->fillScreen(BLACK);
   gfx->setTextSize(2);
@@ -1209,9 +1212,38 @@ static void batteryScreen() {
   gfx->print("voltage, not a calibrated fuel gauge.");
   gfx->setCursor(4, SCREEN_H - 10);
   gfx->setTextColor(WHITE, BLACK);
-  gfx->print("Any key = back");
+  gfx->print("SEL=charge mode  any key=back");
   InputEvent w;
-  while (!getInput(w, 50)) {}
+  while (!getInput(w, 50)) {
+    if (w.ev == EV_SELECT || w.ev == EV_NEWLINE) chargeMode();
+  }
+}
+
+// Charge mode: minimal power draw for faster charging. Screen off, keyboard
+// backlight off, WiFi off; wakes on any key/trackball event.
+static void chargeMode() {
+  Serial.println("[bat] charge mode on");
+  bool wifiWasOn = (WiFi.status() == WL_CONNECTED);
+  if (wifiWasOn) WiFi.disconnect(true);
+  gfx->fillScreen(BLACK);
+  digitalWrite(BOARD_TFT_BACKLIGHT, LOW);   // screen off
+  kbSetBacklight(0);                        // keyboard backlight off
+  setCpuFrequencyMhz(80);                   // slow CPU while charging
+  uint32_t lastRep = 0;
+  InputEvent w;
+  while (true) {
+    if (millis() - lastRep > 30000) {
+      lastRep = millis();
+      Serial.printf("[bat] charging: %d%% (%d mV)\n",
+                    batteryPercent(), batteryMillivolts());
+    }
+    if (getInput(w, 200)) break;            // any input ends charge mode
+  }
+  setCpuFrequencyMhz(240);
+  digitalWrite(BOARD_TFT_BACKLIGHT, HIGH);
+  kbSetBacklight(128);
+  Serial.println("[bat] charge mode off");
+  if (wifiWasOn) wifiAutoConnect();
 }
 
 // Vector icons in terminal green, drawn inside a 24x24 box at (x,y).

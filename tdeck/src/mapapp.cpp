@@ -54,6 +54,13 @@ static void drawTile(Arduino_GFX *display, uint32_t tx, uint32_t ty, int zoom, i
     return;
   }
   File f = SD.open(path, FILE_READ);
+  static uint32_t firstTileMs = 0;
+  if (firstTileMs == 0) {
+    firstTileMs = millis();
+    Serial.printf("[map] opening %s -> %s (%u bytes)\n",
+                  path.c_str(), f ? "OK" : "FAIL",
+                  f ? (unsigned)f.size() : 0);
+  }
   if (!f) {
     // Missing tile: draw a dark placeholder
     int w = TILE_PX, h = TILE_PX;

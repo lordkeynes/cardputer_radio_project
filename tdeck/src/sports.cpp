@@ -19,8 +19,12 @@ bool wifiAutoConnect();
 // so the app never looks frozen and we get a clear error otherwise.
 static bool spEnsureWifi() {
   if (WiFi.status() == WL_CONNECTED) return true;
+  Serial.println("[sports] wifi down, reconnecting...");
   wifiAutoConnect();
-  return WiFi.status() == WL_CONNECTED;
+  bool ok = WiFi.status() == WL_CONNECTED;
+  Serial.printf("[sports] wifi reconnect: %s\n",
+                ok ? WiFi.localIP().toString().c_str() : "FAILED");
+  return ok;
 }
 
 static void spEnsureClock() {
@@ -160,6 +164,8 @@ static int spFetchScoreboard(const char *path, const char *dateCompact,
     }
   }
   http.end();
+  if (ok) Serial.printf("[sports] parsed %d games\n", n);
+  else if (code == 200) Serial.println("[sports] JSON parse FAILED");
   return ok ? n : -1;
 }
 
@@ -180,6 +186,7 @@ static int spCountGames(const char *path, const char *dateCompact, int &nLiveOut
   http.setUserAgent("tdeck-pda/1.0");
   http.setTimeout(6000);
   int code = http.GET();
+  Serial.printf("[sports] count %s -> HTTP %d\n", path, code);
   int n = 0;
   bool ok = false;
   if (code == 200) {
@@ -469,6 +476,8 @@ static void spGameDetail(const char *path, SpGame &g) {
 }
 
 void sportsApp() {
+  Serial.printf("[sports] app open, wifi=%s\n",
+                WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "down");
   spEnsureClock();
   int leagueSel = -1;
   while (true) {

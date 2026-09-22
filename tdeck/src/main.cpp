@@ -1768,10 +1768,15 @@ static void mainMenu() {
     InputEvent e;
     if (!getInput(e, 50)) continue;
     int n = N_CATS;
-    if (e.ev == EV_UP) sel = (sel + n - LAUNCHER_COLS) % n;
-    else if (e.ev == EV_DOWN) sel = (sel + LAUNCHER_COLS) % n;
-    else if (e.ev == EV_LEFT) sel = (sel + n - 1) % n;
-    else if (e.ev == EV_RIGHT) sel = (sel + 1) % n;
+    // Trackball bursts land as several events; accept at most one grid move
+    // every 260ms so the launcher cursor doesn't feel oversensitive.
+    static uint32_t lastMoveMs = 0;
+    bool isMove = (e.ev == EV_UP || e.ev == EV_DOWN || e.ev == EV_LEFT || e.ev == EV_RIGHT);
+    if (isMove && millis() - lastMoveMs < 260) continue;
+    if (e.ev == EV_UP) { lastMoveMs = millis(); sel = (sel + n - LAUNCHER_COLS) % n; }
+    else if (e.ev == EV_DOWN) { lastMoveMs = millis(); sel = (sel + LAUNCHER_COLS) % n; }
+    else if (e.ev == EV_LEFT) { lastMoveMs = millis(); sel = (sel + n - 1) % n; }
+    else if (e.ev == EV_RIGHT) { lastMoveMs = millis(); sel = (sel + 1) % n; }
     else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
       if ((intptr_t)categories[sel].apps == CAT_SPORTS) sportsApp();
       else if ((intptr_t)categories[sel].apps == CAT_RADIO) radioApp();

@@ -21,6 +21,8 @@
 #include "settings.h"
 #include "terminal.h"
 #include "sports.h"
+#include "email.h"
+#include "radio.h"
 
 #define SCREEN_W 320
 #define SCREEN_H 240
@@ -1114,15 +1116,11 @@ static void drawAppIcon(int idx, int x, int y) {
       gfx->drawFastVLine(x + 6, y + 1, 4, c);
       gfx->drawFastVLine(x + 18, y + 1, 4, c);
       break;
-    case 6:  // WiFi: arcs + dot
-      for (int r = 3; r <= 9; r += 3)
-        for (int a = 0; a < 5; a++) {
-          float ang = (90 - a * 45) * 3.14159f / 180.0f;
-          int px = x + 12 + (int)(r * cosf(ang));
-          int py = y + 15 - (int)(r * sinf(ang));
-          gfx->drawPixel(px, py, r == 3 ? c : d);
-        }
-      gfx->fillCircle(x + 12, y + 13, 2, TERM_BRIGHT);
+    case 6:  // WiFi: nested arcs + dot
+      gfx->drawArc(x + 12, y + 15, 8, 9, 240, 300, c);
+      gfx->drawArc(x + 12, y + 15, 5, 6, 240, 300, c);
+      gfx->drawArc(x + 12, y + 15, 2, 3, 240, 300, c);
+      gfx->fillCircle(x + 12, y + 15, 1, TERM_BRIGHT);
       break;
     case 7:  // Battery
       gfx->drawRect(x + 3, y + 7, 16, 10, c);
@@ -1213,6 +1211,17 @@ static void drawAppIcon(int idx, int x, int y) {
       gfx->drawCircle(x + 13, y + 8, 2, TERM_BRIGHT);
       gfx->fillCircle(x + 8, y + 18, 2, TERM_BRIGHT);
       break;
+    case 20:  // Email: envelope
+      gfx->drawRect(x + 3, y + 6, 18, 12, c);
+      gfx->drawLine(x + 3, y + 6, x + 12, y + 13, d);
+      gfx->drawLine(x + 12, y + 13, x + 21, y + 6, d);
+      break;
+    case 21:  // Radio: tower + waves
+      gfx->fillTriangle(x + 10, y + 20, x + 14, y + 20, x + 12, y + 8, c);
+      gfx->fillCircle(x + 12, y + 6, 2, TERM_BRIGHT);
+      gfx->drawArc(x + 12, y + 6, 6, 7, 230, 310, d);
+      gfx->drawArc(x + 12, y + 6, 10, 11, 235, 305, d);
+      break;
     default:
       gfx->drawRect(x + 6, y + 6, 12, 12, c);
       break;
@@ -1224,6 +1233,7 @@ static const char *const launcherLabels[] = {
   "Calc", "Search", "Contcts", "Convrt",
   "Files", "Book", "Image", "Wardrv",
   "Chess", "Go", "Solit", "Chkrs",
+  "Email", "Radio",
 };
 static void (*const launcherRun[])() = {
   notesApp, recorderApp, playbackApp, mapApp,
@@ -1231,8 +1241,9 @@ static void (*const launcherRun[])() = {
   calcApp, searchApp, contactsApp, convertApp,
   filesApp, ebookApp, imageApp, wardriveApp,
   chessApp, goApp, solitaireApp, checkersApp,
+  emailApp, radioApp,
 };
-static const int LAUNCHER_N = 20;
+static const int LAUNCHER_N = 22;
 
 // ---- Category home screen ----
 // Each category is a list of launcher-app indexes above (plus hubs).
@@ -1242,21 +1253,26 @@ struct Category {
   int n;
 };
 
-static const int catProductivity[] = {0, 5, -2};
+static const int catProductivity[] = {0, 5, -2, 20};
+
 static const int catTools[]         = {8, 9, 10, 11, 12};
-static const int catMedia[]         = {13, 14, 1, 2};
-static const int catNetwork[]      = {6, 15, -4, -5};
+static const int catMedia[]         = {13, 14, 1, 2, 21};
+static const int catNetwork[]      = {6, 15, -4};
 static const int catSystem[]        = {7, -1, -3};
 
 static void runSettings() { settingsApp(); }
 static void runTerminal() { terminalApp(); }
 
+// Home screen: 7 entries. Sports (-5) is its own tile, not buried in Network.
+// A category with apps != NULL opens a grid; SPECIAL entries run directly.
+#define CAT_SPORTS -100
 static const Category categories[] = {
-  {"Work",     catProductivity, 3},
+  {"Work",     catProductivity, 4},
   {"Tools",    catTools,        5},
-  {"Media",    catMedia,        4},
-  {"Network",  catNetwork,      4},
+  {"Media",    catMedia,        5},
+  {"Network",  catNetwork,      3},
   {"Games",    NULL,            0},   // gamesApp hub
+  {"Sports",    (const int *)CAT_SPORTS, 0},  // sportsApp direct
   {"System",   catSystem,       3},
 };
 #define N_CATS (int)(sizeof(categories)/sizeof(categories[0]))
@@ -1293,7 +1309,20 @@ static void drawCategoryIcon(int cat, int x, int y) {
       gfx->fillCircle(x + 16, y + 8, 2, d);
       gfx->fillCircle(x + 8, y + 16, 2, d);
       break;
-    case 5:  // System: gear
+    case 5:  // Sports: scoreboard
+      gfx->drawRect(x + 2, y + 3, 20, 18, c);
+      gfx->drawFastHLine(x + 2, y + 8, 20, c);
+      gfx->setTextSize(1);
+      gfx->setTextColor(TERM_BRIGHT, BLACK);
+      gfx->setCursor(x + 5, y + 10);
+      gfx->print("88");
+      gfx->setCursor(x + 13, y + 10);
+      gfx->print("88");
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(x + 5, y + 16);
+      gfx->print("LIVE");
+      break;
+    case 6:  // System: gear
       gfx->drawCircle(x + 12, y + 12, 6, c);
       gfx->drawCircle(x + 12, y + 12, 9, d);
       for (int a = 0; a < 8; a++) {
@@ -1464,7 +1493,8 @@ static void mainMenu() {
     else if (e.ev == EV_LEFT) sel = (sel + n - 1) % n;
     else if (e.ev == EV_RIGHT) sel = (sel + 1) % n;
     else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
-      if (categories[sel].apps == NULL) gamesApp();
+      if ((intptr_t)categories[sel].apps == CAT_SPORTS) sportsApp();
+      else if (categories[sel].apps == NULL) gamesApp();
       else {
         runGridPage(categories[sel].name, categories[sel].apps, categories[sel].n);
       }

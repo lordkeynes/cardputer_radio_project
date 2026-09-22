@@ -338,3 +338,21 @@ void wifiBandsApp() {
     if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) { WiFi.scanDelete(); return; }
   }
 }
+
+// Saved-network management for the Settings app: list /wifi/known.txt
+// entries, let the user forget individual networks.
+int wifiKnownList(String *ssids, int maxN) {
+  KnownNet nets[MAX_KNOWN];
+  int n = loadKnown(nets, MAX_KNOWN);
+  if (n > maxN) n = maxN;
+  for (int i = 0; i < n; i++) ssids[i] = nets[i].ssid;
+  return n;
+}
+
+void wifiForget(int idx) {
+  KnownNet nets[MAX_KNOWN];
+  int n = loadKnown(nets, MAX_KNOWN);
+  if (idx < 0 || idx >= n) return;
+  for (int i = idx; i < n - 1; i++) nets[i] = nets[i + 1];
+  saveKnown(nets, n - 1);
+}

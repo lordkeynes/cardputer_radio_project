@@ -51,41 +51,32 @@ static const char *const sleepLabels[] = {
 };
 #define N_SLEEP (int)(sizeof(sleepChoices)/sizeof(sleepChoices[0]))
 
-void settingsApp() {
-  int curTheme = themeIndex();
-  unsigned long curSleep = settingsSleepMs();
-  int sleepSel = 3;
-  for (int i = 0; i < N_SLEEP; i++)
-    if (sleepChoices[i] == curSleep) { sleepSel = i; break; }
-
+static void settingsThemeScreen() {
+  int cur = themeIndex();
   bool needsRedraw = true;
   while (true) {
     if (needsRedraw) {
       needsRedraw = false;
       gfx->fillScreen(BLACK);
-      gfx->setTextSize(2);
-      gfx->setTextColor(TERM_GREEN, BLACK);
-      gfx->setCursor(8, 6);
-      gfx->print("Settings");
       gfx->setTextSize(1);
-
-      // Theme picker: list with live color swatch
+      gfx->setTextColor(TERM_GREEN, BLACK);
+      gfx->setCursor(4, 7);
+      gfx->print("Theme");
+      gfx->drawFastHLine(0, 18, SCREEN_W, TERM_DIM);
       gfx->setTextColor(TERM_DIM, BLACK);
-      gfx->setCursor(8, 34);
-      gfx->print("Theme (u/d, click to apply):");
+      gfx->setCursor(8, 26);
+      gfx->print("u/d=pick click=apply Long=back");
       int nT = themeCount();
       for (int i = 0; i < nT; i++) {
-        int y = 48 + i * 14;
-        if (i == curTheme) {
+        int y = 40 + i * 14;
+        if (i == cur) {
           gfx->fillRect(0, y - 2, SCREEN_W, 13, TERM_SEL_BG);
           gfx->setTextColor(BLACK, TERM_SEL_BG);
         } else gfx->setTextColor(TERM_BRIGHT, BLACK);
         gfx->setCursor(10, y);
         gfx->print(themeName(i));
       }
-
-      // Preview swatches of the active theme
-      int py = 48 + nT * 14 + 6;
+      int py = 40 + nT * 14 + 6;
       gfx->setTextColor(TERM_DIM, BLACK);
       gfx->setCursor(8, py);
       gfx->print("Colors:");
@@ -95,41 +86,172 @@ void settingsApp() {
         gfx->fillRect(60 + i * 24, py - 1, 20, 10, sw[i]);
         gfx->drawRect(60 + i * 24, py - 1, 20, 10, TERM_DIM);
       }
-
-      // Sleep timeout picker
-      int sy = py + 24;
-      gfx->setTextColor(TERM_DIM, BLACK);
-      gfx->setCursor(8, sy);
-      gfx->print("Screen sleep (l/r, click):");
-      for (int i = 0; i < N_SLEEP; i++) {
-        int x = 10 + i * 44;
-        if (i == sleepSel) {
-          gfx->fillRect(x - 2, sy + 12, 42, 13, TERM_SEL_BG);
-          gfx->setTextColor(BLACK, TERM_SEL_BG);
-        } else gfx->setTextColor(TERM_BRIGHT, BLACK);
-        gfx->setCursor(x, sy + 14);
-        gfx->print(sleepLabels[i]);
-      }
-
-      gfx->setTextColor(TERM_DIM, BLACK);
-      gfx->setCursor(4, SCREEN_H - 10);
-      gfx->print("Long-click = save & exit");
     }
     InputEventP e;
     if (!pdaGetInput(e, 50)) continue;
-    if (e.ev == PDA_EV_UP && curTheme > 0) { curTheme--; themeSet(curTheme); needsRedraw = true; }
-    else if (e.ev == PDA_EV_DOWN && curTheme < themeCount() - 1) {
-      curTheme++; themeSet(curTheme); needsRedraw = true;
+    if (e.ev == PDA_EV_UP && cur > 0) { cur--; themeSet(cur); needsRedraw = true; }
+    else if (e.ev == PDA_EV_DOWN && cur < themeCount() - 1) {
+      cur++; themeSet(cur); needsRedraw = true;
     }
-    else if (e.ev == PDA_EV_LEFT && sleepSel > 0) { sleepSel--; needsRedraw = true; }
-    else if (e.ev == PDA_EV_RIGHT && sleepSel < N_SLEEP - 1) { sleepSel++; needsRedraw = true; }
-    else if (e.ev == PDA_EV_SELECT) {
-      sleepSave(sleepChoices[sleepSel]);
+    else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) return;
+  }
+}
+
+static void settingsSleepScreen() {
+  unsigned long cur = settingsSleepMs();
+  int sel = 3;
+  for (int i = 0; i < N_SLEEP; i++)
+    if (sleepChoices[i] == cur) { sel = i; break; }
+  bool needsRedraw = true;
+  while (true) {
+    if (needsRedraw) {
+      needsRedraw = false;
+      gfx->fillScreen(BLACK);
+      gfx->setTextSize(1);
+      gfx->setTextColor(TERM_GREEN, BLACK);
+      gfx->setCursor(4, 7);
+      gfx->print("Screen sleep");
+      gfx->drawFastHLine(0, 18, SCREEN_W, TERM_DIM);
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(8, 26);
+      gfx->print("l/r=pick click=save Long=back");
+      for (int i = 0; i < N_SLEEP; i++) {
+        int y = 44 + i * 16;
+        if (i == sel) {
+          gfx->fillRect(0, y - 2, SCREEN_W, 15, TERM_SEL_BG);
+          gfx->setTextColor(BLACK, TERM_SEL_BG);
+        } else gfx->setTextColor(TERM_BRIGHT, BLACK);
+        gfx->setCursor(10, y);
+        gfx->print(sleepLabels[i]);
+      }
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(4, SCREEN_H - 10);
+      gfx->print("click=save Long=back");
+    }
+    InputEventP e;
+    if (!pdaGetInput(e, 50)) continue;
+    if (e.ev == PDA_EV_UP && sel > 0) { sel--; needsRedraw = true; }
+    else if (e.ev == PDA_EV_DOWN && sel < N_SLEEP - 1) { sel++; needsRedraw = true; }
+    else if (e.ev == PDA_EV_LEFT && sel > 0) { sel--; needsRedraw = true; }
+    else if (e.ev == PDA_EV_RIGHT && sel < N_SLEEP - 1) { sel++; needsRedraw = true; }
+    else if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) {
+      sleepSave(sleepChoices[sel]);
+      gfx->fillRect(0, SCREEN_H - 20, SCREEN_W, 14, BLACK);
+      gfx->setTextColor(TERM_ACCENT, BLACK);
+      gfx->setCursor(4, SCREEN_H - 16);
+      gfx->print("Saved");
+      delay(400);
       needsRedraw = true;
     }
-    else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) {
-      sleepSave(sleepChoices[sleepSel]);
-      return;
+    else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) return;
+  }
+}
+
+extern int wifiKnownList(String *ssids, int maxN);
+extern void wifiForget(int idx);
+
+#define SET_WIFI_MAX 8
+
+static void settingsWifiScreen() {
+  static String ssids[SET_WIFI_MAX];
+  int n = sdOk ? wifiKnownList(ssids, SET_WIFI_MAX) : 0;
+  int sel = 0;
+  bool needsRedraw = true;
+  while (true) {
+    if (needsRedraw) {
+      needsRedraw = false;
+      gfx->fillScreen(BLACK);
+      gfx->setTextSize(1);
+      gfx->setTextColor(TERM_GREEN, BLACK);
+      gfx->setCursor(4, 7);
+      gfx->print("Saved WiFi");
+      gfx->drawFastHLine(0, 18, SCREEN_W, TERM_DIM);
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(8, 26);
+      gfx->print("click=forget  Long=back");
+      if (n == 0) {
+        gfx->setTextColor(TERM_BRIGHT, BLACK);
+        gfx->setCursor(10, 50);
+        gfx->print("No saved networks");
+      }
+      for (int i = 0; i < n; i++) {
+        int y = 44 + i * 16;
+        if (i == sel) {
+          gfx->fillRect(0, y - 2, SCREEN_W, 15, TERM_SEL_BG);
+          gfx->setTextColor(BLACK, TERM_SEL_BG);
+        } else gfx->setTextColor(TERM_BRIGHT, BLACK);
+        gfx->setCursor(10, y);
+        gfx->print(ssids[i]);
+      }
     }
+    InputEventP e;
+    if (!pdaGetInput(e, 50)) continue;
+    if (e.ev == PDA_EV_UP && sel > 0) { sel--; needsRedraw = true; }
+    else if (e.ev == PDA_EV_DOWN && sel < n - 1) { sel++; needsRedraw = true; }
+    else if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) {
+      if (n > 0) {
+        wifiForget(sel);
+        n = sdOk ? wifiKnownList(ssids, SET_WIFI_MAX) : 0;
+        if (sel >= n) sel = n - 1;
+        if (sel < 0) sel = 0;
+      }
+      needsRedraw = true;
+    }
+    else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) return;
+  }
+}
+
+void settingsApp() {
+  static const char *const items[] = { "Theme", "Screen sleep", "Saved WiFi" };
+  const int n = 3;
+  int sel = 0;
+  int lastSel = -1;
+  bool full = true;
+  while (true) {
+    if (full) {
+      gfx->fillScreen(BLACK);
+      gfx->setTextSize(1);
+      gfx->setTextColor(TERM_GREEN, BLACK);
+      gfx->setCursor(4, 7);
+      gfx->print("Settings");
+      gfx->drawFastHLine(0, 18, SCREEN_W, TERM_DIM);
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(8, 26);
+      gfx->print("u/d=pick click=open Long=back");
+      for (int i = 0; i < n; i++) {
+        int y = 48 + i * 18;
+        if (i == sel) {
+          gfx->fillRect(0, y - 2, SCREEN_W, 15, TERM_SEL_BG);
+          gfx->setTextColor(BLACK, TERM_SEL_BG);
+        } else gfx->setTextColor(TERM_BRIGHT, BLACK);
+        gfx->setCursor(12, y);
+        gfx->print(items[i]);
+      }
+      lastSel = sel;
+      full = false;
+    } else if (sel != lastSel) {
+      int y = 48 + lastSel * 18;
+      gfx->fillRect(0, y - 2, SCREEN_W, 15, BLACK);
+      gfx->setTextColor(TERM_BRIGHT, BLACK);
+      gfx->setCursor(12, y);
+      gfx->print(items[lastSel]);
+      y = 48 + sel * 18;
+      gfx->fillRect(0, y - 2, SCREEN_W, 15, TERM_SEL_BG);
+      gfx->setTextColor(BLACK, TERM_SEL_BG);
+      gfx->setCursor(12, y);
+      gfx->print(items[sel]);
+      lastSel = sel;
+    }
+    InputEventP e;
+    if (!pdaGetInput(e, 50)) continue;
+    if (e.ev == PDA_EV_UP && sel > 0) { sel--; }
+    else if (e.ev == PDA_EV_DOWN && sel < n - 1) { sel++; }
+    else if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) {
+      if (sel == 0) settingsThemeScreen();
+      else if (sel == 1) settingsSleepScreen();
+      else settingsWifiScreen();
+      full = true;
+    }
+    else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) return;
   }
 }

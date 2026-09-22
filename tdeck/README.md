@@ -173,12 +173,27 @@ An on-device shell. Type commands, Enter runs:
 `gps` (fix/sats), `ip`, `scan` (WiFi), `date`, `beep`, `clear`, `help`.
 Long-click exits.
 
-### Settings
+### Email (read-only IMAP)
+Lists the newest messages in INBOX over TLS IMAP; click a message to read its
+text body. Config lives on the SD card at `/config/email.txt` with one line:
 
-Theme picker (Phosphor, Amber, Ice, Crimson, Mono) with live preview —
-applied immediately and saved to `/config/theme.txt`. Screen-sleep timeout
-(Never/15 s/30 s/45 s/1 min/2 min/5 min), saved to `/config/sleep.txt`.
-The theme also restyles every app; the keyboard backlight follows the
+    imap.example.com:993 you@example.com yourpassword
+
+(Gmail and some providers require an app password.)
+
+### Radio
+Internet radio, ported from the Cardputer Advanced Radio app. Up/down changes
+station, click tunes or pauses, left/right adjusts volume, long-click exits.
+Station list: `/radio/station_list.txt` on the SD card, one per line
+(`Name, URL`); a built-in list is used when the card is missing. Streams play
+through the onboard speaker.
+
+### Settings
+Settings is now a menu: Theme, Screen sleep, and Saved WiFi. Saved WiFi
+lists remembered networks (from `/wifi/known.txt`); click forgets one.
+Theme picker (Phosphor, Amber, Ice, Crimson, Mono) applies immediately and
+saves to `/config/theme.txt`; the sleep timeout (Never/15 s/30 s/45 s/1 min/
+2 min/5 min) saves to `/config/sleep.txt`. The keyboard backlight follows the
 screen-sleep setting automatically.
 
 ## Layout

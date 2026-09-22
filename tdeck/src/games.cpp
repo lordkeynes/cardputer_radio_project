@@ -1036,39 +1036,105 @@ static void (*const gameRun[])(void) = {
 };
 #define N_GAMES (int)(sizeof(gameNames)/sizeof(gameNames[0]))
 
-void gamesApp() {
-  int sel = 0;
-  bool needsRedraw = true;
-  while (true) {
-    if (needsRedraw) {
-      needsRedraw = false;
-      gfx->fillScreen(BLACK);
-      gfx->setTextSize(2);
-      gfx->setTextColor(TERM_GREEN, BLACK);
-      gfx->setCursor(8, 6);
-      gfx->print("Games");
-      gfx->setTextSize(1);
-      gfx->setTextColor(TERM_DIM, BLACK);
-      gfx->setCursor(4, SCREEN_H - 10);
-      gfx->print("u/d=pick click=play Long=back");
-      for (int i = 0; i < N_GAMES; i++) {
-        int y = 36 + i * 22;
-        if (i == sel) {
-          gfx->fillRect(0, y - 2, SCREEN_W, 20, TERM_SEL_BG);
-          gfx->setTextColor(BLACK, TERM_SEL_BG);
-        } else gfx->setTextColor(TERM_BRIGHT, BLACK);
-        gfx->setTextSize(1);
-        gfx->setCursor(10, y);
-        gfx->print(gameNames[i]);
+static void drawGameIcon(int idx, int x, int y) {
+  uint16_t c = TERM_GREEN, d = TERM_DIM;
+  switch (idx) {
+    case 0:  // Chess: pawn
+      gfx->fillCircle(x + 12, y + 8, 3, c);
+      gfx->fillRect(x + 9, y + 12, 6, 4, c);
+      gfx->fillRect(x + 7, y + 17, 10, 3, c);
+      break;
+    case 1:  // Go: 5x5 board + stones
+      gfx->drawRect(x + 4, y + 4, 16, 16, c);
+      for (int i = 0; i < 4; i++) {
+        gfx->drawFastHLine(x + 4, y + 8 + i * 4, 16, d);
+        gfx->drawFastVLine(x + 8 + i * 4, y + 4, 16, d);
       }
+      gfx->fillCircle(x + 8, y + 8, 2, TERM_BRIGHT);
+      gfx->drawCircle(x + 16, y + 16, 2, TERM_BRIGHT);
+      break;
+    case 2:  // Solitaire: cards
+      gfx->fillRect(x + 4, y + 5, 11, 15, TERM_BRIGHT);
+      gfx->drawRect(x + 4, y + 5, 11, 15, c);
+      gfx->fillRect(x + 8, y + 9, 11, 15, BLACK);
+      gfx->drawRect(x + 8, y + 9, 11, 15, c);
+      gfx->fillCircle(x + 13, y + 16, 2, TERM_ACCENT);
+      break;
+    case 3:  // Checkers: board + 2 men
+      for (int r = 0; r < 5; r++)
+        for (int q = 0; q < 5; q++)
+          if ((r + q) % 2) gfx->fillRect(x + 3 + q * 4, y + 3 + r * 4, 4, 4, d);
+      gfx->fillCircle(x + 9, y + 9, 2, TERM_BRIGHT);
+      gfx->fillCircle(x + 17, y + 13, 2, c);
+      break;
+    case 4:  // Snake: S body + food
+      gfx->drawFastHLine(x + 5, y + 6, 12, TERM_BRIGHT);
+      gfx->drawFastVLine(x + 17, y + 6, 7, TERM_BRIGHT);
+      gfx->drawFastHLine(x + 8, y + 13, 9, TERM_BRIGHT);
+      gfx->drawFastVLine(x + 8, y + 13, 5, TERM_BRIGHT);
+      gfx->drawFastHLine(x + 8, y + 17, 5, TERM_BRIGHT);
+      gfx->fillCircle(x + 6, y + 6, 2, TERM_ACCENT);
+      break;
+    case 5:  // Stats: trophy
+      gfx->drawRect(x + 7, y + 5, 10, 7, c);
+      gfx->drawFastHLine(x + 7, y + 5, 3, c);  // left handle
+      gfx->drawFastVLine(x + 7, y + 6, 4, c);
+      gfx->drawFastVLine(x + 16, y + 6, 4, c);
+      gfx->drawFastHLine(x + 16, y + 5, 3, c);
+      gfx->drawFastVLine(x + 11, y + 12, 4, c);
+      gfx->drawFastHLine(x + 8, y + 16, 8, c);
+      break;
+  }
+}
+
+#define GAME_COLS 3
+#define GAME_CELL_W (SCREEN_W / GAME_COLS)
+#define GAME_CELL_H ((SCREEN_H - 18 - 26) / 2)
+
+static void drawGameCell(int i, bool selected) {
+  int x = (i % GAME_COLS) * GAME_CELL_W;
+  int y = 26 + (i / GAME_COLS) * GAME_CELL_H;
+  uint16_t bg = selected ? TERM_SEL_BG : BLACK;
+  gfx->fillRect(x, y, GAME_CELL_W, GAME_CELL_H, bg);
+  drawGameIcon(i, x + (GAME_CELL_W - 24) / 2, y + (GAME_CELL_H - 24 - 10) / 2);
+  gfx->setTextSize(1);
+  gfx->setTextColor(selected ? BLACK : TERM_DIM, bg);
+  int tw = strlen(gameNames[i]) * 6;
+  gfx->setCursor(x + (GAME_CELL_W - tw) / 2, y + GAME_CELL_H - 12);
+  gfx->print(gameNames[i]);
+}
+
+void gamesApp() {
+  gfx->fillScreen(BLACK);
+  gfx->setTextSize(1);
+  gfx->setTextColor(TERM_GREEN, BLACK);
+  gfx->setCursor(4, 7);
+  gfx->print("Games");
+  gfx->drawFastHLine(0, 18, SCREEN_W, TERM_DIM);
+  gfx->setTextColor(TERM_DIM, BLACK);
+  gfx->setCursor(4, SCREEN_H - 10);
+  gfx->print("click=play Long=back");
+  int sel = 0, lastSel = -1;
+  bool full = true;
+  while (true) {
+    if (full) {
+      for (int i = 0; i < N_GAMES; i++) drawGameCell(i, i == sel);
+      lastSel = sel;
+      full = false;
+    } else if (sel != lastSel) {
+      drawGameCell(lastSel, false);
+      drawGameCell(sel, true);
+      lastSel = sel;
     }
     InputEventP e;
     if (!pdaGetInput(e, 50)) continue;
-    if (e.ev == PDA_EV_UP && sel > 0) { sel--; needsRedraw = true; }
-    else if (e.ev == PDA_EV_DOWN && sel < N_GAMES - 1) { sel++; needsRedraw = true; }
+    if (e.ev == PDA_EV_UP) sel = (sel + N_GAMES - GAME_COLS) % N_GAMES;
+    else if (e.ev == PDA_EV_DOWN) sel = (sel + GAME_COLS) % N_GAMES;
+    else if (e.ev == PDA_EV_LEFT) sel = (sel + N_GAMES - 1) % N_GAMES;
+    else if (e.ev == PDA_EV_RIGHT) sel = (sel + 1) % N_GAMES;
     else if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) {
       gameRun[sel]();
-      needsRedraw = true;
+      full = true;
     }
     else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) return;
   }

@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <time.h>
 #include <ArduinoJson.h>
 #include <Arduino_GFX_Library.h>
 #include "pda.h"
@@ -9,6 +10,17 @@
 #include "sports.h"
 
 extern Arduino_GFX *gfx;
+
+// If the clock has never been set (no GPS fix), sync from NTP over WiFi so
+// 'today' means the actual today for the scoreboard.
+static void spEnsureClock() {
+  time_t now = time(NULL);
+  if (now > 1700000000) return;   // clock already sane
+  if (WiFi.status() != WL_CONNECTED) return;
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  // wait up to 4 s for NTP
+  for (int i = 0; i < 40 && time(NULL) < 1700000000; i++) delay(100);
+}
 
 // sport/league path segments for the ESPN site API
 struct League { const char *name; const char *path; };
@@ -347,6 +359,7 @@ static void spGameDetail(const char *path, SpGame &g) {
 }
 
 void sportsApp() {
+  spEnsureClock();
   int leagueSel = -1;
   while (true) {
     leagueSel = spLeaguePicker(leagueSel < 0 ? 0 : leagueSel);

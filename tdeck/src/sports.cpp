@@ -13,10 +13,15 @@ extern Arduino_GFX *gfx;
 
 // If the clock has never been set (no GPS fix), sync from NTP over WiFi so
 // 'today' means the actual today for the scoreboard.
+bool wifiAutoConnect();
+
 static void spEnsureClock() {
   time_t now = time(NULL);
   if (now > 1700000000) return;   // clock already sane
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    wifiAutoConnect();   // boot auto-connect may not have finished
+    if (WiFi.status() != WL_CONNECTED) return;
+  }
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   // wait up to 4 s for NTP
   for (int i = 0; i < 40 && time(NULL) < 1700000000; i++) delay(100);
@@ -86,7 +91,10 @@ static void spDateCompact(long offsetDays, char *out, size_t n) {
 // events[].competitions[].competitors[] + status; sizes kept small via filter
 static int spFetchScoreboard(const char *path, const char *dateCompact,
                              SpGame *games, int maxGames) {
-  if (WiFi.status() != WL_CONNECTED) return -1;
+  if (WiFi.status() != WL_CONNECTED) {
+    wifiAutoConnect();
+    if (WiFi.status() != WL_CONNECTED) return -1;
+  }
   char url[160];
   snprintf(url, sizeof(url),
            "https://site.api.espn.com/apis/site/v2/sports/%s/scoreboard?dates=%s",
@@ -150,7 +158,10 @@ static int spFetchScoreboard(const char *path, const char *dateCompact,
 // returns -1 on network error
 static int spCountGames(const char *path, const char *dateCompact, int &nLiveOut) {
   nLiveOut = 0;
-  if (WiFi.status() != WL_CONNECTED) return -1;
+  if (WiFi.status() != WL_CONNECTED) {
+    wifiAutoConnect();
+    if (WiFi.status() != WL_CONNECTED) return -1;
+  }
   char url[160];
   snprintf(url, sizeof(url),
            "https://site.api.espn.com/apis/site/v2/sports/%s/scoreboard?dates=%s",
@@ -209,7 +220,10 @@ static void spCountsTask(void *pv) {
 static void spFetchDetail(const char *path, const char *eventId, SpDetail &d) {
   memset(&d, 0, sizeof(d));
   d.ok = false;
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    wifiAutoConnect();
+    if (WiFi.status() != WL_CONNECTED) return;
+  }
   char url[192];
   snprintf(url, sizeof(url),
            "https://site.api.espn.com/apis/site/v2/sports/%s/summary?event=%s",
@@ -320,6 +334,7 @@ static int spLeaguePicker(int startSel) {
   int sel = startSel;
   bool needsRedraw = true;
   // kick off a background refresh of counts (never blocks the UI)
+  if (WiFi.status() != WL_CONNECTED) wifiAutoConnect();
   if (WiFi.status() == WL_CONNECTED && !spCountsBusy) {
     for (int i = 0; i < N_LEAGUES; i++) { spCounts[i] = -2; spLive[i] = 0; }
     spCountsGen = 0;

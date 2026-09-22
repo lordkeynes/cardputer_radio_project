@@ -36,6 +36,7 @@ static void termPrint(const char *s) {
     if (*s == '\n') {
       if (termCurRow < TERM_ROWS - 1) termCurRow++;
       else { memmove(termScreen[0], termScreen[1], (TERM_ROWS - 1) * (TERM_COLS + 1)); termScreen[TERM_ROWS - 1][0] = ' '; termScreen[TERM_ROWS - 1][1] = 0; }
+      s++;   // BUG FIX: advance past newline (was an infinite loop -> WDT reboot)
       continue;
     }
     if (len >= TERM_COLS) {

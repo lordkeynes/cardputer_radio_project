@@ -1019,82 +1019,84 @@ void spkBeep(int ms) {
   i2s_driver_uninstall(SPK_I2S_PORT);
 }
 
-// pick an audio file from any folder: shows /recordings + /radio first
+// pick an audio file from anywhere on the SD card: folder-by-folder browser.
+// Starts at the root; click a folder to enter it, click a file to select it.
 static bool pickAudioFile(String &outPath) {
-  const char *folders[] = {REC_DIR, "/radio/rec"};
-  const char *labels[] = {"Recordings", "Radio recordings"};
-  String names[2][MAX_FILES];
-  int counts[2] = {0, 0};
-  for (int d = 0; d < 2; d++) {
-    File root = SD.open(folders[d]);
-    if (root && root.isDirectory()) {
-      File f = root.openNextFile();
-      while (f && counts[d] < MAX_FILES) {
-        String nm = f.name();
-        if (!f.isDirectory() && (nm.endsWith(".wav") || nm.endsWith(".mp3"))) {
-          String shortNm = nm;
-          int slash = shortNm.lastIndexOf('/');
-          if (slash >= 0) shortNm = shortNm.substring(slash + 1);
-          names[d][counts[d]++] = String(folders[d]) + "/" + shortNm;
-        }
-        f.close();
-        f = root.openNextFile();
-      }
-      root.close();
-    }
-  }
-  int total = counts[0] + counts[1];
-  if (total == 0) return false;
-  // flat picker across both folders (section headers skipped; simple list)
+  if (!sdOk) return false;
+  String path = "/";
+  String names[MAX_FILES];
+  bool isDir[MAX_FILES];
   const int visible = 12;
-  int sel = 0, scroll = 0;
+  int n = 0, sel = 0, scroll = 0;
   bool needsRedraw = true;
   while (true) {
     if (needsRedraw) {
       needsRedraw = false;
       drawTitle("Play");
       gfx->setTextSize(1);
-      int y = 30;
-      for (int d = 0; d < 2; d++) {
-        if (counts[d] == 0) continue;
-        gfx->setTextColor(TERM_DIM, BLACK);
-        gfx->setCursor(6, y);
-        gfx->println(labels[d]);
-        y += 13;
-        int startIdx = (d == 0) ? 0 : counts[0];
-        for (int i = 0; i < counts[d]; i++) {
-          int idx = startIdx + i;
-          if (idx < scroll || idx >= scroll + visible) continue;
-          int row = idx - scroll;
-          int yy = 30 + 14 + row * 14;   // approximate; fine for <24 items
-          if (idx == sel) {
-            gfx->fillRect(0, yy - 2, SCREEN_W, 13, RGB565(0, 120, 255));
-            gfx->setTextColor(BLACK, TERM_SEL_BG);
-          } else gfx->setTextColor(WHITE, BLACK);
-          gfx->setCursor(6, yy);
-          gfx->println(baseName(names[d][i]));
+      gfx->setTextColor(TERM_ACCENT, BLACK);
+      gfx->setCursor(6, 22);
+      gfx->println(path == "/" ? "/" : path);
+      n = 0;
+      File root = SD.open(path);
+      if (root && root.isDirectory()) {
+        File f = root.openNextFile();
+        while (f && n < MAX_FILES) {
+          String nm = f.name();
+          int slash = nm.lastIndexOf('/');
+          if (slash >= 0) nm = nm.substring(slash + 1);
+          if (nm.length() == 0) { f.close(); f = root.openNextFile(); continue; }
+          bool dir = f.isDirectory();
+          // files: only audio types
+          if (!dir && !(nm.endsWith(".wav") || nm.endsWith(".mp3"))) { f.close(); f = root.openNextFile(); continue; }
+          names[n] = nm;
+          isDir[n] = dir;
+          n++;
+          f.close();
+          f = root.openNextFile();
         }
-        y += counts[d] * 14 + 4;
+        root.close();
       }
-      gfx->setTextColor(WHITE, BLACK);
+      int top = scroll;
+      if (top > n - visible) top = n > visible ? n - visible : 0;
+      if (top < 0) top = 0;
+      scroll = top;
+      for (int i = 0; i < visible && top + i < n; i++) {
+        int idx = top + i;
+        int y = 38 + i * 14;
+        if (idx == sel) {
+          gfx->fillRect(0, y - 2, SCREEN_W, 13, RGB565(0, 120, 255));
+          gfx->setTextColor(BLACK, TERM_SEL_BG);
+        } else {
+          gfx->setTextColor(isDir[idx] ? TERM_CYAN : WHITE, BLACK);
+        }
+        gfx->setCursor(6, y);
+        gfx->print(isDir[idx] ? "[D] " : "    ");
+        gfx->print(names[idx]);
+      }
+      gfx->setTextColor(TERM_DIM, BLACK);
       gfx->setCursor(4, SCREEN_H - 10);
-      gfx->println("Click = play  Long-click = back");
+      gfx->println("click=open b=up-dir Long=back");
     }
     InputEvent e;
     if (!getInput(e, 50)) continue;
     if (e.ev == EV_UP && sel > 0) { sel--; needsRedraw = true; }
-    else if (e.ev == EV_DOWN && sel < total - 1) { sel++; needsRedraw = true; }
+    else if (e.ev == EV_DOWN && sel < n - 1) { sel++; needsRedraw = true; }
     else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
-      int d = (sel < counts[0]) ? 0 : 1;
-      int i = (d == 0) ? sel : sel - counts[0];
-      if (i >= 0 && i < counts[d]) {
-        outPath = names[d][i];
+      if (sel < n && isDir[sel]) {
+        path += (path.endsWith("/") ? "" : "/") + names[sel];
+        sel = 0; scroll = 0; needsRedraw = true;
+      } else if (sel < n) {
+        outPath = path + (path.endsWith("/") ? "" : "/") + names[sel];
         return true;
       }
+    } else if (e.ev == EV_CHAR && (e.ch == 'b' || e.ch == 'B')) {
+      int slash = path.lastIndexOf('/');
+      if (slash > 0) { path = path.substring(0, slash); sel = 0; scroll = 0; needsRedraw = true; }
     } else if (e.ev == EV_BACK || e.ev == EV_LEFT || e.ev == EV_LONGSELECT) return false;
     // keep selection visible
-    if (sel < scroll) scroll = sel;
-    if (sel >= scroll + visible) scroll = sel - visible + 1;
+    if (sel < scroll) { scroll = sel; needsRedraw = true; }
+    if (sel >= scroll + visible) { scroll = sel - visible + 1; needsRedraw = true; }
   }
 }
 
@@ -1403,6 +1405,7 @@ static void runTerminal() { terminalApp(); }
 // Home screen: 7 entries. Sports (-5) is its own tile, not buried in Network.
 // A category with apps != NULL opens a grid; SPECIAL entries run directly.
 #define CAT_SPORTS -100
+#define CAT_RADIO  -101
 static const Category categories[] = {
   {"Work",     catProductivity, 4},
   {"Tools",    catTools,        5},
@@ -1410,6 +1413,7 @@ static const Category categories[] = {
   {"Network",  catNetwork,      3},
   {"Games",    NULL,            0},   // gamesApp hub
   {"Sports",    (const int *)CAT_SPORTS, 0},  // sportsApp direct
+  {"Radio",     (const int *)CAT_RADIO,  0},   // radioApp direct
   {"System",   catSystem,       3},
 };
 #define N_CATS (int)(sizeof(categories)/sizeof(categories[0]))
@@ -1458,6 +1462,13 @@ static void drawCategoryIcon(int cat, int x, int y) {
       gfx->setTextColor(TERM_DIM, BLACK);
       gfx->setCursor(x + 5, y + 16);
       gfx->print("LIVE");
+      break;
+    case 7:  // Radio: tower with waves
+      gfx->drawFastVLine(x + 12, y + 10, 12, c);
+      gfx->fillTriangle(x + 6, y + 22, x + 18, y + 22, x + 12, y + 12, c);
+      gfx->drawCircle(x + 12, y + 8, 3, TERM_BRIGHT);
+      gfx->drawArc(x + 12, y + 8, 6, 7, 200, 340, d);
+      gfx->drawArc(x + 12, y + 8, 9, 10, 200, 340, d);
       break;
     case 6:  // System: gear
       gfx->drawCircle(x + 12, y + 12, 6, c);
@@ -1632,6 +1643,7 @@ static void mainMenu() {
     else if (e.ev == EV_RIGHT) sel = (sel + 1) % n;
     else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
       if ((intptr_t)categories[sel].apps == CAT_SPORTS) sportsApp();
+      else if ((intptr_t)categories[sel].apps == CAT_RADIO) radioApp();
       else if (categories[sel].apps == NULL) gamesApp();
       else {
         runGridPage(categories[sel].name, categories[sel].apps, categories[sel].n);

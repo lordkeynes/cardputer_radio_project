@@ -292,8 +292,16 @@ void calendarApp() {
     viewYear = lt.tm_year + 1900;
     viewMonth = lt.tm_mon + 1;
   }
-  // Day cursor (0 = none). Days with tasks show a dot.
+  // Day cursor, initialized to today so trackball movement is always by day.
   int selDay = 0;
+  {
+    time_t now = time(NULL);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    viewYear = lt.tm_year + 1900;
+    viewMonth = lt.tm_mon + 1;
+    selDay = lt.tm_mday;
+  }
   bool needsRedraw = true;
   while (true) {
     if (needsRedraw) {
@@ -359,20 +367,23 @@ void calendarApp() {
         int n = todoLoadTasks(tasks, TODO_MAX_TASKS);
         int shown = 0;
         gfx->setTextColor(TERM_ACCENT, BLACK);
-        gfx->setCursor(8, 150);
+        gfx->setCursor(8, 180);
         gfx->printf("%d %s:", selDay, months[viewMonth - 1]);
         for (int i = 0; i < n && shown < 3; i++) {
           if (tasks[i].dueYear == viewYear && tasks[i].dueMonth == viewMonth &&
               tasks[i].dueDay == selDay) {
-            gfx->setCursor(8, 162 + shown * 12);
+            gfx->setCursor(8, 192 + shown * 12);
             gfx->setTextColor(tasks[i].done ? RGB565(120, 120, 120) : WHITE, BLACK);
             gfx->print(tasks[i].done ? "[x] " : "[ ] ");
-            gfx->print(tasks[i].text);
+            for (int c = 0; c < TODO_MAX_LEN && tasks[i].text[c]; c++) {
+              gfx->print(tasks[i].text[c]);
+              if (c >= 46) break;   // keep text inside the 320px screen
+            }
             shown++;
           }
         }
         if (shown == 0) {
-          gfx->setCursor(8, 162);
+          gfx->setCursor(8, 192);
           gfx->setTextColor(TERM_DIM, BLACK);
           gfx->print("(no tasks)");
         }
@@ -427,8 +438,15 @@ void calendarApp() {
         break;
       }
       case PDA_EV_CHAR:
-        if (e.ch == 'm') { nextMonth(); needsRedraw = true; }
-        else if (e.ch == 'p') { prevMonth(); needsRedraw = true; }
+        if (e.ch == 'm') {
+          nextMonth();
+          if (selDay > daysIn(viewYear, viewMonth)) selDay = daysIn(viewYear, viewMonth);
+          needsRedraw = true;
+        } else if (e.ch == 'p') {
+          prevMonth();
+          if (selDay > daysIn(viewYear, viewMonth)) selDay = daysIn(viewYear, viewMonth);
+          needsRedraw = true;
+        }
         else if (e.ch == 'y') { viewYear++; needsRedraw = true; }
         else if (e.ch == 'Y') { viewYear--; needsRedraw = true; }
         else if (e.ch == 't') {

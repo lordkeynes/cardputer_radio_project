@@ -191,7 +191,17 @@ static bool radioTune(int idx) {
   curStation = idx;
   WiFi.setSleep(false);   // keep radio responsive; modem sleep drops streams
   isPlaying = audio->connecttohost(stations[idx].url.c_str());
+  // the lib resets its gain on connect; re-apply our volume
+  if (isPlaying) audio->setVolume(volume);
   return isPlaying;
+}
+
+// if the stream drops, try one silent re-tune of the same station
+static void radioTick() {
+  if (audio && isPlaying && !audio->isRunning()) {
+    isPlaying = audio->connecttohost(stations[curStation].url.c_str());
+    if (isPlaying) audio->setVolume(volume);
+  }
 }
 
 static void radioDraw(bool full) {
@@ -228,8 +238,11 @@ static void radioDraw(bool full) {
   gfx->setTextColor(TERM_DIM, BLACK);
   gfx->setCursor(10, 104);
   gfx->print("vol ");
-  for (int i = 0; i < 21; i++)
-    gfx->fillRect(40 + i * 6, 104, 4, 8, i < volume ? TERM_GREEN : TERM_DIM);
+  int maxV = audio ? (int)audio->maxVolume() : 21;
+  if (maxV < 1) maxV = 1;
+  int step = maxV > 24 ? 4 : 6;
+  for (int i = 0; i < maxV; i++)
+    gfx->fillRect(40 + i * step, 104, 4, 8, i < volume ? TERM_GREEN : TERM_DIM);
   // REC indicator + elapsed
   if (recActive) {
     gfx->setTextColor(TERM_RED, BLACK);
@@ -255,6 +268,7 @@ void radioApp() {
       lastFrame = millis();
     }
     if (audio) audio->loop();
+    radioTick();
 
     InputEventP e;
     if (!pdaGetInput(e, 20)) continue;
@@ -272,7 +286,8 @@ void radioApp() {
       volume--;
       if (audio) audio->setVolume(volume);
       full = true;
-    } else if (e.ev == PDA_EV_RIGHT && volume < 21) {
+    } else if (e.ev == PDA_EV_RIGHT &&
+               (audio ? volume < (int)audio->maxVolume() : volume < 21)) {
       volume++;
       if (audio) audio->setVolume(volume);
       full = true;

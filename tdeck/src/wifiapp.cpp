@@ -61,13 +61,22 @@ bool wifiAutoConnect() {
   KnownNet known[MAX_KNOWN];
   int n = loadKnown(known, MAX_KNOWN);
   if (n == 0) return false;
-  // Strongest-signal-first is handled by trying in stored order; keep simple.
+  // Persistent mode + persistent config so the radio keeps credentials
+  // across power cycles and reconnects on its own after dropouts.
+  WiFi.mode(WIFI_STA);
+  WiFi.persistent(true);
+  // Fast path: NVS already knows the last network; reconnect in seconds.
+  if (WiFi.begin() == WL_CONNECTED || WiFi.status() == WL_CONNECTED) {
+    wifiUp = true;
+    Serial.printf("[wifi] reconnected to %s (%s)\n",
+                  WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+    return true;
+  }
   for (int attempt = 0; attempt < 2; attempt++) {
     for (int i = 0; i < n; i++) {
-      WiFi.mode(WIFI_STA);
       WiFi.begin(known[i].ssid.c_str(), known[i].pass.c_str());
       uint32_t start = millis();
-      while (WiFi.status() != WL_CONNECTED && millis() - start < 6000) {
+      while (WiFi.status() != WL_CONNECTED && millis() - start < 8000) {
         delay(100);
       }
       if (WiFi.status() == WL_CONNECTED) {
@@ -76,9 +85,10 @@ bool wifiAutoConnect() {
                       known[i].ssid.c_str(), WiFi.localIP().toString().c_str());
         return true;
       }
+      WiFi.disconnect();
+      delay(200);
     }
   }
-  WiFi.disconnect();
   return false;
 }
 

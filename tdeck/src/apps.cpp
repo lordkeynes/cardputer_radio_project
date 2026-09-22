@@ -497,16 +497,63 @@ void contactsApp() {
       case PDA_EV_SELECT:
       case PDA_EV_NEWLINE: {
         if (n > 0) {
-          // view/edit contact
-          String out;
-          gfx->fillRect(0, SCREEN_H - 40, SCREEN_W, 40, BLACK);
-          gfx->setTextSize(1); gfx->setTextColor(TERM_ACCENT, BLACK);
-          gfx->setCursor(8, SCREEN_H - 36);
-          gfx->print(names[sel]); gfx->print(" | "); gfx->print(phones[sel]);
-          gfx->setCursor(8, SCREEN_H - 24);
-          gfx->print(emails[sel]);
-          InputEventP w; bool done = false;
-          while (!done) { if (pdaGetInput(w, 50)) done = true; }
+          // field editor: up/down picks a field, click edits it, s saves
+          const char *fields[] = {"Name", "Phone", "Email"};
+          String *vals[3] = {&names[sel], &phones[sel], &emails[sel]};
+          int fsel = 0;
+          bool edNeedsRedraw = true;
+          while (true) {
+            if (edNeedsRedraw) {
+              edNeedsRedraw = false;
+              gfx->fillScreen(BLACK);
+              gfx->setTextSize(1);
+              gfx->setTextColor(TERM_GREEN, BLACK);
+              gfx->setCursor(8, 6);
+              gfx->print("Edit contact");
+              gfx->drawFastHLine(0, 16, SCREEN_W, TERM_DIM);
+              for (int i = 0; i < 3; i++) {
+                int y = 28 + i * 26;
+                gfx->setTextColor(TERM_DIM, BLACK);
+                gfx->setCursor(8, y);
+                gfx->print(fields[i]);
+                if (i == fsel) {
+                  gfx->fillRect(0, y + 8, SCREEN_W, 16, TERM_SEL_BG);
+                  gfx->setTextColor(BLACK, TERM_SEL_BG);
+                } else {
+                  gfx->setTextColor(WHITE, BLACK);
+                }
+                gfx->setCursor(60, y + 10);
+                gfx->print(*vals[i]);
+              }
+              gfx->setTextColor(TERM_DIM, BLACK);
+              gfx->setCursor(4, SCREEN_H - 10);
+              gfx->print("u/d=field click=edit s=save Long=cancel");
+            }
+            InputEventP w;
+            if (!pdaGetInput(w, 50)) continue;
+            if (w.ev == PDA_EV_UP) { fsel = (fsel + 2) % 3; edNeedsRedraw = true; }
+            else if (w.ev == PDA_EV_DOWN) { fsel = (fsel + 1) % 3; edNeedsRedraw = true; }
+            else if (w.ev == PDA_EV_SELECT || w.ev == PDA_EV_NEWLINE) {
+              String v;
+              if (promptText(fields[fsel], v)) { *vals[fsel] = v; edNeedsRedraw = true; }
+            }
+            else if (w.ev == PDA_EV_CHAR && (w.ch == 's' || w.ch == 'S')) {
+              // rewrite the whole file with this contact updated
+              if (sdOk) {
+                File f = SD.open(CONTACTS_FILE, FILE_WRITE);
+                if (f) {
+                  for (int i = 0; i < n; i++) {
+                    f.print(names[i]); f.print('\t');
+                    f.print(phones[i]); f.print('\t');
+                    f.print(emails[i]); f.print('\n');
+                  }
+                  f.close();
+                }
+              }
+              break;
+            }
+            else if (w.ev == PDA_EV_LONGSELECT || w.ev == PDA_EV_BACK) break;
+          }
           needsRedraw = true;
         }
         break;

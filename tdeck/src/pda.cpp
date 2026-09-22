@@ -6,6 +6,7 @@
 #include <Wire.h>
 #include <SD.h>
 #include <sys/time.h>
+#include <time.h>
 #include <Arduino_GFX_Library.h>
 #include "utilities.h"
 #include "pda.h"
@@ -80,6 +81,31 @@ void pdaWake() {
 // GPS time is applied by pdaApplyGpsTime() from the map/GPS poll loop.
 
 static bool timeSynced = false;
+static const char *pdaTz = "EST5EDT,M3.2.0,M11.1.0";   // default: US Eastern
+
+static long pdaDaysFromCivil(int y, int m, int d) {
+  y -= m <= 2;
+  long era = (y >= 0 ? y : y - 399) / 400;
+  long yoe = y - era * 400;
+  long doy = (153L * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + doe - 719468;
+}
+
+static time_t pdaTimegm(const struct tm *t) {
+  return (time_t)pdaDaysFromCivil(t->tm_year + 1900, t->tm_mon + 1, t->tm_mday) * 86400L
+       + t->tm_hour * 3600 + t->tm_min * 60 + t->tm_sec;
+}
+
+void pdaSetTimezone(const char *posixTz) {
+  if (!posixTz || !posixTz[0]) return;
+  pdaTz = posixTz;
+  setenv("TZ", pdaTz, 1);
+  tzset();
+}
+
+const char *pdaGetTimezone() { return pdaTz; }
+void pdaInitTimezone() { pdaSetTimezone(pdaTz); }
 
 void pdaApplyGpsTime(int year, int month, int day, int hour, int minute, int second) {
   if (year < 2020 || month < 1 || month > 12) return;
@@ -90,7 +116,8 @@ void pdaApplyGpsTime(int year, int month, int day, int hour, int minute, int sec
   t.tm_hour = hour;
   t.tm_min = minute;
   t.tm_sec = second;
-  time_t tt = mktime(&t);
+  // GPS reports UTC; convert as UTC so the TZ offset applies on read
+  time_t tt = pdaTimegm(&t);
   if (tt > 1600000000) {  // sanity
     struct timeval tv = { .tv_sec = tt, .tv_usec = 0 };
     settimeofday(&tv, NULL);

@@ -1134,11 +1134,11 @@ void snakeApp() {
 
 // ============================ Flappy ============================
 // Flappy-bird style: click/Enter to flap, avoid pipes, score per pipe.
-#define FL_GRAVITY     0.35f
-#define FL_FLAP        -6.2f
+#define FL_GRAVITY     0.22f
+#define FL_FLAP        -3.8f
 #define FL_PIPE_W      26
-#define FL_GAP         66
-#define FL_SPEED       2.4f
+#define FL_GAP         92
+#define FL_SPEED       2.0f
 #define FL_STEP_MS     28
 
 struct Flappy {
@@ -1307,13 +1307,17 @@ static void (*const gameRun[])(void) = {
 static void drawGameIcon(int idx, int x, int y) {
   uint16_t c = TERM_GREEN, d = TERM_DIM;
   switch (idx) {
-    case 0: {  // Chess: knight silhouette
-      gfx->fillTriangle(x + 6, y + 18, x + 18, y + 18, x + 12, y + 14, c);  // base
-      gfx->fillRect(x + 8, y + 15, 8, 3, c);
-      gfx->fillTriangle(x + 7, y + 15, x + 14, y + 15, x + 10, y + 6, c);  // neck
-      gfx->fillCircle(x + 12, y + 5, 3, c);                                 // head
-      gfx->fillRect(x + 13, y + 4, 4, 2, c);                                // muzzle
-      gfx->fillRect(x + 9, y + 3, 2, 3, c);                                 // ear
+    case 0: {  // Chess: two opposing pawns facing off
+      // light pawn (left)
+      gfx->fillCircle(x + 7, y + 6, 2, TERM_BRIGHT);
+      gfx->fillTriangle(x + 7, y + 7, x + 10, y + 7, x + 9, y + 13, TERM_BRIGHT);
+      gfx->fillRect(x + 4, y + 14, 7, 2, TERM_BRIGHT);
+      gfx->fillRect(x + 3, y + 16, 9, 3, TERM_BRIGHT);
+      // dark pawn (right, slightly larger)
+      gfx->fillCircle(x + 16, y + 5, 3, c);
+      gfx->fillTriangle(x + 16, y + 7, x + 20, y + 7, x + 18, y + 14, c);
+      gfx->fillRect(x + 13, y + 14, 8, 2, c);
+      gfx->fillRect(x + 12, y + 16, 10, 3, c);
       break;
     }
     case 1:  // Go: 5x5 board + stones
@@ -1417,7 +1421,7 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->drawCircle(x + 17, y + 8, 3, TERM_GREEN);
       gfx->fillCircle(x + 17, y + 17, 3, TERM_BRIGHT);
       break;
-    case 12:  // Stats: trophy
+    case 23:  // Stats: trophy
       gfx->drawRect(x + 7, y + 5, 10, 7, c);
       gfx->drawFastHLine(x + 7, y + 5, 3, c);  // left handle
       gfx->drawFastVLine(x + 7, y + 6, 4, c);
@@ -1426,7 +1430,7 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->drawFastVLine(x + 11, y + 12, 4, c);
       gfx->drawFastHLine(x + 8, y + 16, 8, c);
       break;
-    case 13: {  // Connect4: discs stack
+    case 12: {  // Connect4: discs stack
       for (int r = 0; r < 3; r++)
         for (int cc = 0; cc < 3; cc++)
           gfx->drawCircle(x + 6 + cc * 6, y + 8 + r * 6, 2,
@@ -1434,7 +1438,7 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->drawRect(x + 3, y + 22, 18, 2, c);
       break;
     }
-    case 14: {  // Battleship: hull + superstructure + guns on waves
+    case 13: {  // Battleship: hull + superstructure + guns on waves
       // waves
       for (int i = 0; i < 3; i++) gfx->drawFastHLine(x + 1 + (i % 2) * 2, y + 18 + i * 2, 20 - (i % 2) * 4, d);
       // hull (pointed bow right)
@@ -1449,20 +1453,22 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->fillRect(x + 10, y + 2, 2, 4, TERM_BRIGHT);
       break;
     }
-    case 15: {  // Wordle: green HIT tile with a letter inside
+    case 14: {  // Wordle: letter-tile row, gray/yellow/green
       const uint16_t HIT = RGB565(0x2f, 0xd0, 0x50);
+      const uint16_t NEAR = RGB565(0xd8, 0xb0, 0x2a);
+      const uint16_t tileCols[5] = {d, d, NEAR, HIT, d};
+      gfx->setTextSize(1);
+      const char *word = "WORDLE";
       for (int i = 0; i < 5; i++) {
         int tx = x + 1 + i * 5;
-        if (i == 2) gfx->fillRect(tx, y + 7, 4, 10, HIT);
-        else gfx->drawRect(tx, y + 7, 4, 10, d);
+        gfx->fillRect(tx, y + 7, 4, 10, tileCols[i]);
+        gfx->setTextColor(BLACK, tileCols[i]);
+        gfx->setCursor(tx, y + 9);
+        gfx->print(word[i]);
       }
-      gfx->setTextSize(1);
-      gfx->setTextColor(BLACK, HIT);
-      gfx->setCursor(x + 10, y + 10);
-      gfx->print("A");
       break;
     }
-    case 16: {  // Sudoku: 9x9 mini grid + a few givens
+    case 15: {  // Sudoku: 9x9 mini grid + a few givens
       gfx->drawRect(x + 3, y + 3, 18, 18, c);
       for (int i = 1; i < 3; i++) {
         gfx->drawFastVLine(x + 3 + i * 6, y + 3, 18, d);
@@ -1477,14 +1483,14 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->setCursor(x + 11, y + 17); gfx->print("8");
       break;
     }
-    case 17: {  // Sokoban: box + target
+    case 16: {  // Sokoban: box + target
       gfx->drawRect(x + 10, y + 10, 8, 8, c);
       gfx->drawLine(x + 10, y + 10, x + 17, y + 17, d);
       gfx->drawLine(x + 17, y + 10, x + 10, y + 17, d);
       gfx->drawCircle(x + 6, y + 7, 2, TERM_BRIGHT);
       break;
     }
-    case 18: {  // Invaders: classic crab alien (sprite-accurate)
+    case 17: {  // Invaders: classic crab alien (sprite-accurate)
       gfx->fillRect(x + 6, y + 3, 3, 2, c);    // antennae
       gfx->fillRect(x + 15, y + 3, 3, 2, c);
       gfx->fillRect(x + 4, y + 5, 16, 4, c);   // head row
@@ -1498,7 +1504,7 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->fillRect(x + 15, y + 16, 2, 4, c);
       break;
     }
-    case 19: {  // Asteroids: ship + rocks
+    case 18: {  // Asteroids: ship + rocks
       gfx->fillCircle(x + 6, y + 8, 3, d);
       gfx->drawCircle(x + 18, y + 6, 3, c);
       gfx->drawLine(x + 8, y + 18, x + 14, y + 10, TERM_BRIGHT);
@@ -1506,14 +1512,14 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->drawLine(x + 8, y + 18, x + 20, y + 18, TERM_BRIGHT);
       break;
     }
-    case 20: {  // Doodle: bouncing character + platform
+    case 19: {  // Doodle: bouncing character + platform
       gfx->fillCircle(x + 12, y + 8, 4, TERM_BRIGHT);
       gfx->fillCircle(x + 10, y + 7, 1, BLACK);
       gfx->fillCircle(x + 14, y + 7, 1, BLACK);
       gfx->fillRect(x + 5, y + 17, 14, 3, c);
       break;
     }
-    case 21: {  // Hearts: playing card with heart pip
+    case 20: {  // Hearts: playing card with heart pip
       gfx->fillRect(x + 4, y + 3, 15, 18, RGB565(0xe8, 0xf0, 0xe8));
       gfx->drawRect(x + 4, y + 3, 15, 18, TERM_GREEN);
       gfx->fillCircle(x + 8, y + 9, 3, TERM_RED);
@@ -1526,7 +1532,7 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->print("H");
       break;
     }
-    case 22: {  // Spades: playing card with spade pip
+    case 21: {  // Spades: playing card with spade pip
       gfx->fillRect(x + 4, y + 3, 15, 18, RGB565(0xe8, 0xf0, 0xe8));
       gfx->drawRect(x + 4, y + 3, 15, 18, TERM_GREEN);
       gfx->fillCircle(x + 9, y + 10, 3, RGB565(0x10, 0x10, 0x10));
@@ -1539,13 +1545,26 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->print("S");
       break;
     }
-    case 23: {  // Backgammon: dice + triangle board
-      gfx->drawRect(x + 2, y + 3, 6, 6, TERM_BRIGHT);
-      gfx->fillRect(x + 4, y + 5, 2, 2, TERM_BRIGHT);
-      gfx->drawRect(x + 16, y + 3, 6, 6, TERM_BRIGHT);
-      gfx->fillRect(x + 19, y + 5, 2, 2, TERM_BRIGHT);
-      gfx->fillTriangle(x + 8, y + 20, x + 12, y + 12, x + 16, y + 20, c);
-      gfx->fillCircle(x + 12, y + 17, 2, TERM_BRIGHT);
+    case 22: {  // Backgammon: triangle points + stacked checkers + dice
+      // alternating triangle points
+      for (int i = 0; i < 4; i++) {
+        if (i % 2 == 0)
+          gfx->fillTriangle(x + 2 + i * 5, y + 21, x + 6 + i * 5, y + 21,
+                            x + 4 + i * 5, y + 4, c);
+        else
+          gfx->drawTriangle(x + 2 + i * 5, y + 21, x + 6 + i * 5, y + 21,
+                           x + 4 + i * 5, y + 4, d);
+      }
+      // checker stacks
+      gfx->fillCircle(x + 4, y + 9, 2, TERM_BRIGHT);
+      gfx->fillCircle(x + 4, y + 12, 2, TERM_BRIGHT);
+      gfx->fillCircle(x + 19, y + 14, 2, TERM_ACCENT);
+      // dice in the middle
+      gfx->fillRect(x + 9, y + 9, 5, 5, TERM_BRIGHT);
+      gfx->fillRect(x + 11, y + 11, 1, 1, BLACK);
+      gfx->fillRect(x + 15, y + 9, 5, 5, TERM_BRIGHT);
+      gfx->fillRect(x + 17, y + 10, 1, 1, BLACK);
+      gfx->fillRect(x + 17, y + 12, 1, 1, BLACK);
       break;
     }
   }

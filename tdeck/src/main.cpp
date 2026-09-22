@@ -445,6 +445,7 @@ static void mapScanTiles() {
   uint32_t bestX = 0, bestY = 0;
   for (int z = 18; z >= 1; z--) {
     String zdir = String(MAP_TILE_DIR) + "/z" + String(z);
+    if (!SD.exists(zdir)) zdir = String(MAP_TILE_DIR) + "/" + String(z);
     if (!SD.exists(zdir)) continue;
     File zfl = SD.open(zdir);
     if (!zfl) continue;
@@ -1390,10 +1391,10 @@ struct Category {
   int n;
 };
 
-static const int catProductivity[] = {0, 5, 3, -2, 20};
+static const int catProductivity[] = {0, 5, -2, 20};
 
 static const int catTools[]         = {8, 9, 10, 11, 12};
-static const int catMedia[]         = {13, 14, 1, 2, 21};
+static const int catMedia[]         = {13, 14, 1, 2};
 static const int catNetwork[]      = {6, 15, -4};
 static const int catSystem[]        = {7, -1, -3};
 
@@ -1404,14 +1405,16 @@ static void runTerminal() { terminalApp(); }
 // A category with apps != NULL opens a grid; SPECIAL entries run directly.
 #define CAT_SPORTS -100
 #define CAT_RADIO  -101
+#define CAT_MAP    -102
 static const Category categories[] = {
-  {"Work",     catProductivity, 5},
+  {"Work",     catProductivity, 4},
   {"Tools",    catTools,        5},
-  {"Media",    catMedia,        5},
+  {"Media",    catMedia,        4},
   {"Network",  catNetwork,      3},
   {"Games",    NULL,            0},   // gamesApp hub
   {"Sports",    (const int *)CAT_SPORTS, 0},  // sportsApp direct
   {"Radio",     (const int *)CAT_RADIO,  0},   // radioApp direct
+  {"Map",       (const int *)CAT_MAP,    0},   // mapApp direct
   {"System",   catSystem,       3},
 };
 #define N_CATS (int)(sizeof(categories)/sizeof(categories[0]))
@@ -1477,6 +1480,16 @@ static void drawCategoryIcon(int cat, int x, int y) {
                       x + 12 + 13 * cosf(ang), y + 12 + 13 * sinf(ang), d);
       }
       break;
+    case 8: {  // Map: folded map + route + GPS dot
+      gfx->drawRect(x + 2, y + 5, 20, 15, c);
+      gfx->drawFastVLine(x + 8, y + 5, 15, d);
+      gfx->drawFastVLine(x + 15, y + 5, 15, d);
+      gfx->drawLine(x + 4, y + 16, x + 8, y + 11, TERM_ACCENT);
+      gfx->drawLine(x + 8, y + 11, x + 14, y + 14, TERM_ACCENT);
+      gfx->drawLine(x + 14, y + 14, x + 19, y + 8, TERM_ACCENT);
+      gfx->fillCircle(x + 19, y + 8, 2, TERM_ACCENT);
+      break;
+    }
     default:
       gfx->drawRect(x + 6, y + 6, 12, 12, c);
       break;
@@ -1642,6 +1655,7 @@ static void mainMenu() {
     else if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) {
       if ((intptr_t)categories[sel].apps == CAT_SPORTS) sportsApp();
       else if ((intptr_t)categories[sel].apps == CAT_RADIO) radioApp();
+      else if ((intptr_t)categories[sel].apps == CAT_MAP) mapApp();
       else if (categories[sel].apps == NULL) gamesApp();
       else {
         runGridPage(categories[sel].name, categories[sel].apps, categories[sel].n);

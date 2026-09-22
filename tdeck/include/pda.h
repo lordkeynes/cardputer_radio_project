@@ -43,6 +43,9 @@ void kbSetBacklight(uint8_t duty);
 // Time
 void pdaApplyGpsTime(int y, int m, int d, int hh, int mm, int ss);
 bool pdaTimeSynced();
+void pdaSetTimezone(const char *posixTz);
+const char *pdaGetTimezone();
+void pdaInitTimezone();
 
 // Apps
 void clockApp();

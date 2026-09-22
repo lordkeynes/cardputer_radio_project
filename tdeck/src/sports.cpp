@@ -16,6 +16,7 @@ extern Arduino_GFX *gfx;
 bool wifiAutoConnect();
 
 static void spEnsureClock() {
+  pdaInitTimezone();   // apply saved TZ so 'today' matches the user's day
   time_t now = time(NULL);
   if (now > 1700000000) return;   // clock already sane
   if (WiFi.status() != WL_CONNECTED) {

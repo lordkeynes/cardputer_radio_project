@@ -42,6 +42,8 @@ double tileYToLat(uint32_t y, int zoom) {
 static void drawTile(Arduino_GFX *display, uint32_t tx, uint32_t ty, int zoom, int sx, int sy, int screenW, int screenH) {
   if (tx >= (uint32_t)(1 << zoom) || ty >= (uint32_t)(1 << zoom)) return;
   String path = String(MAP_TILE_DIR) + "/z" + String(zoom) + "/" + String(tx) + "/" + String(ty) + ".bin";
+  if (!SD.exists(path))
+    path = String(MAP_TILE_DIR) + "/" + String(zoom) + "/" + String(tx) + "/" + String(ty) + ".bin";
   if (!SD.exists(path)) {
     int w = TILE_PX, h = TILE_PX;
     if (sx + w > screenW) w = screenW - sx;

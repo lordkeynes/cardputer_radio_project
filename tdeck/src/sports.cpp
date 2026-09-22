@@ -4,12 +4,14 @@
 #include <HTTPClient.h>
 #include <time.h>
 #include <ArduinoJson.h>
+#include <SD.h>
 #include <Arduino_GFX_Library.h>
 #include "pda.h"
 #include "theme.h"
 #include "sports.h"
 
 extern Arduino_GFX *gfx;
+extern bool sdOk;
 
 // If the clock has never been set (no GPS fix), sync from NTP over WiFi so
 // 'today' means the actual today for the scoreboard.
@@ -60,6 +62,48 @@ static const League leagues[] = {
   {"MMA",     "mma/mma"},
 };
 #define N_LEAGUES (int)(sizeof(leagues)/sizeof(leagues[0]))
+
+#define SP_ENABLED_FILE "/sports/leagues.txt"
+static bool spEnabled[N_LEAGUES];
+static bool spEnabledLoaded = false;
+
+static void spLoadEnabled() {
+  for (int i = 0; i < N_LEAGUES; i++) spEnabled[i] = true;   // all on by default
+  if (!sdOk || !SD.exists(SP_ENABLED_FILE)) { spEnabledLoaded = true; return; }
+  File f = SD.open(SP_ENABLED_FILE, FILE_READ);
+  if (!f) { spEnabledLoaded = true; return; }
+  String line = f.readStringUntil('\n');
+  line.trim();
+  f.close();
+  for (int i = 0; i < (int)line.length() && i < N_LEAGUES; i++)
+    spEnabled[i] = (line[i] == '1');
+  spEnabledLoaded = true;
+}
+
+static void spSaveEnabled() {
+  if (!sdOk) return;
+  if (!SD.exists("/sports")) SD.mkdir("/sports");
+  File f = SD.open(SP_ENABLED_FILE, FILE_WRITE);
+  if (!f) return;
+  for (int i = 0; i < N_LEAGUES; i++) f.print(spEnabled[i] ? '1' : '0');
+  f.print('\n');
+  f.close();
+}
+
+static int spEnabledIdx(int slot) {   // slot -> league index (enabled only)
+  for (int i = 0; i < N_LEAGUES; i++) {
+    if (!spEnabled[i]) continue;
+    if (slot == 0) return i;
+    slot--;
+  }
+  return -1;
+}
+
+static int spSlotCount() {
+  int n = 0;
+  for (int i = 0; i < N_LEAGUES; i++) if (spEnabled[i]) n++;
+  return n;
+}
 
 #define SP_MAX_GAMES 16
 #define SP_MAX_PERIODS 12
@@ -351,7 +395,64 @@ static void spDrawMsg(const char *l1, const char *l2) {
   while (millis() - t0 < 2500) { if (pdaGetInput(e, 50)) break; }
 }
 
+static void spLeagueSettings() {
+  if (!spEnabledLoaded) spLoadEnabled();
+  int sel = 0;
+  bool needsRedraw = true;
+  while (true) {
+    if (needsRedraw) {
+      needsRedraw = false;
+      gfx->fillScreen(BLACK);
+      gfx->setTextSize(2);
+      gfx->setTextColor(TERM_GREEN, BLACK);
+      gfx->setCursor(8, 6);
+      gfx->print("Leagues");
+      gfx->setTextSize(1);
+      gfx->setTextColor(TERM_DIM, BLACK);
+      gfx->setCursor(4, SCREEN_H - 10);
+      gfx->print("click=on/off s=save Long=back");
+      const int visible = 8;
+      int top = 0;
+      if (sel >= visible) top = sel - visible + 1;
+      for (int i = 0; i < visible && top + i < N_LEAGUES; i++) {
+        int y = 30 + i * 20;
+        int li = top + i;
+        if (li == sel) {
+          gfx->fillRect(0, y - 2, SCREEN_W, 18, TERM_SEL_BG);
+          gfx->setTextColor(BLACK, TERM_SEL_BG);
+        } else gfx->setTextColor(TERM_BRIGHT, BLACK);
+        gfx->setCursor(10, y);
+        gfx->printf("[%c] %s", spEnabled[li] ? 'x' : ' ', leagues[li].name);
+      }
+    }
+    InputEventP e;
+    if (!pdaGetInput(e, 50)) continue;
+    if (e.ev == PDA_EV_UP && sel > 0) { sel--; needsRedraw = true; }
+    else if (e.ev == PDA_EV_DOWN && sel < N_LEAGUES - 1) { sel++; needsRedraw = true; }
+    else if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) {
+      spEnabled[sel] = !spEnabled[sel];
+      spSaveEnabled();
+      needsRedraw = true;
+    }
+    else if (e.ev == PDA_EV_CHAR && (e.ch == 's' || e.ch == 'S')) {
+      spSaveEnabled();
+      return;
+    }
+    else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) {
+      spSaveEnabled();
+      return;
+    }
+  }
+}
+
 static int spLeaguePicker(int startSel) {
+  if (!spEnabledLoaded) spLoadEnabled();
+  int nSlots = spSlotCount();
+  if (nSlots == 0) {   // everything off: go straight to settings
+    spLeagueSettings();
+    nSlots = spSlotCount();
+    if (nSlots == 0) return -1;
+  }
   int sel = startSel;
   bool needsRedraw = true;
   // kick off a background refresh of counts (never blocks the UI)
@@ -375,24 +476,26 @@ static int spLeaguePicker(int startSel) {
       gfx->setTextSize(1);
       gfx->setTextColor(TERM_DIM, BLACK);
       gfx->setCursor(4, SCREEN_H - 10);
-      gfx->print("u/d=pick click=go Long=back");
+      gfx->print("u/d=pick click=go s=setup Long=back");
       const int visible = 8;
       int top = 0;
       if (sel >= visible) top = sel - visible + 1;
-      for (int i = 0; i < visible && top + i < N_LEAGUES; i++) {
+      for (int i = 0; i < visible && top + i < nSlots; i++) {
         int y = 30 + i * 20;
+        int li = spEnabledIdx(top + i);
+        if (li < 0) break;
         if (top + i == sel) {
           gfx->fillRect(0, y - 2, SCREEN_W, 18, TERM_SEL_BG);
           gfx->setTextColor(BLACK, TERM_SEL_BG);
         } else gfx->setTextColor(TERM_BRIGHT, BLACK);
         gfx->setCursor(10, y);
-        gfx->print(leagues[top + i].name);
+        gfx->print(leagues[li].name);
         // right column: games today / live games
         char cb[16];
-        int cnt = spCounts[top + i];
+        int cnt = spCounts[li];
         if (cnt == -2) snprintf(cb, sizeof(cb), " ..");
         else if (cnt < 0) snprintf(cb, sizeof(cb), " --");
-        else if (spLive[top + i] > 0) snprintf(cb, sizeof(cb), " %d (%d live)", cnt, spLive[top + i]);
+        else if (spLive[li] > 0) snprintf(cb, sizeof(cb), " %d (%d live)", cnt, spLive[li]);
         else snprintf(cb, sizeof(cb), " %d gm", cnt);
         int cw = strlen(cb) * 6;
         gfx->setCursor(SCREEN_W - 8 - cw, y);
@@ -402,8 +505,15 @@ static int spLeaguePicker(int startSel) {
     InputEventP e;
     if (!pdaGetInput(e, 20)) continue;
     if (e.ev == PDA_EV_UP && sel > 0) { sel--; needsRedraw = true; }
-    else if (e.ev == PDA_EV_DOWN && sel < N_LEAGUES - 1) { sel++; needsRedraw = true; }
-    else if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) return sel;
+    else if (e.ev == PDA_EV_DOWN && sel < nSlots - 1) { sel++; needsRedraw = true; }
+    else if (e.ev == PDA_EV_SELECT || e.ev == PDA_EV_NEWLINE) return spEnabledIdx(sel);
+    else if (e.ev == PDA_EV_CHAR && (e.ch == 's' || e.ch == 'S')) {
+      spLeagueSettings();
+      nSlots = spSlotCount();
+      if (nSlots == 0) return -1;
+      if (sel >= nSlots) sel = nSlots - 1;
+      needsRedraw = true;
+    }
     else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) return -1;
   }
 }

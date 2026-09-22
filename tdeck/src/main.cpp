@@ -177,6 +177,8 @@ static void trackballTask(void *pv) {
   const char *dir_name[4] = {"RIGHT", "UP", "LEFT", "DOWN"};
   void (*const isrs[4])() = {tbIsr0, tbIsr1, tbIsr2, tbIsr3};
   uint32_t lastCount[4] = {0, 0, 0, 0};
+  uint32_t lastSentMs[4] = {0, 0, 0, 0};
+  const uint32_t TB_MIN_INTERVAL_MS = 90;   // hardware bounces; 1 move / 90ms max
   pinMode(BOARD_BOOT_PIN, INPUT_PULLUP);
   for (int i = 0; i < 4; i++) {
     pinMode(dir_pins[i], INPUT_PULLUP);
@@ -191,9 +193,12 @@ static void trackballTask(void *pv) {
       if (n != lastCount[i]) {
         uint32_t newPulses = n - lastCount[i];
         lastCount[i] = n;
+        uint32_t now = millis();
+        if (now - lastSentMs[i] < TB_MIN_INTERVAL_MS) continue;   // swallow bursts
+        lastSentMs[i] = now;
         Serial.printf("[tb] %s (pin %d) x%lu\n", dir_name[i], dir_pins[i], (unsigned long)newPulses);
         InputEvent e = {};
-        e.ts = millis();
+        e.ts = now;
         e.ev = dir_ev[i];
         xQueueSend(inputQueue, &e, 0);
       }
@@ -558,14 +563,25 @@ static void mapApp() {
       gfx->setTextSize(1);
       gfx->setTextColor(TERM_ACCENT, BLACK);
       gfx->setCursor(2, SCREEN_H - 12);
-      snprintf(statusLine, sizeof(statusLine), "z%d %s %.5f,%.5f  sats:%d",
+      snprintf(statusLine, sizeof(statusLine), "z%d %s %.5f,%.5f s:%d%s",
                mapZoom, hasFix ? "GPS" : "no-fix",
                mapCenterLat, mapCenterLon,
-               gps.satellites.isValid() ? gps.satellites.value() : 0);
+               gps.satellites.isValid() ? gps.satellites.value() : 0,
+               mapFollowGps ? " [follow]" : "");
       gfx->print(statusLine);
     }
     InputEvent e;
     if (!getInput(e, 100)) continue;
+    // Drain any queued movement events so one flick = one redraw
+    InputEvent extra;
+    while (xQueueReceive(inputQueue, &extra, 0)) {
+      if (extra.ev == EV_UP || extra.ev == EV_DOWN ||
+          extra.ev == EV_LEFT || extra.ev == EV_RIGHT) e = extra;
+      else {
+        xQueueSendToFront(inputQueue, &extra, 0);
+        break;
+      }
+    }
     switch (e.ev) {
       case EV_UP:    mapFollowGps = false; centerPixelYf -= step; needsRedraw = true; break;
       case EV_DOWN:  mapFollowGps = false; centerPixelYf += step; needsRedraw = true; break;
@@ -583,7 +599,17 @@ static void mapApp() {
       }
       case EV_LONGSELECT: return;
       case EV_CHAR:
-        if (e.ch == '+' || e.ch == '=') {
+        if (e.ch == 'g' || e.ch == 'G') {
+          mapFollowGps = false;
+          if (hasFix) {
+            double nn = pow(2, mapZoom);
+            double lr = gps.location.lat() * M_PI / 180.0;
+            centerPixelXf = (gps.location.lng() + 180.0) / 360.0 * nn * 256.0;
+            centerPixelYf = (1.0 - log(tan(lr) + 1.0 / cos(lr)) / M_PI) / 2.0 * nn * 256.0;
+          }
+          needsRedraw = true;
+        }
+        else if (e.ch == '+' || e.ch == '=') {
           if (mapZoom < 18) {
             mapZoom++;
             centerPixelXf *= 2;
@@ -729,9 +755,26 @@ static int textEditor(const String &path, char *buf, size_t bufSize, bool isNew)
         if (end - start > visibleChars) end = start + visibleChars;
         gfx->setCursor(6, 30 + i * 14);
         gfx->setTextColor(WHITE, BLACK);
-        for (int j = start; j < end; j++) gfx->print(buf[j]);
+        // simple inline markup: *bold* -> bright, _italic_ -> cyan, ~dim~ -> dim
+        char openMark = 0;
+        for (int j = start; j < end; j++) {
+          char c = buf[j];
+          if (c == '*' || c == '_' || c == '~') {
+            if (openMark == 0) {
+              openMark = c;
+              gfx->setTextColor(c == '*' ? TERM_BRIGHT : (c == '_' ? TERM_CYAN : TERM_DIM), BLACK);
+              continue;
+            }
+            if (c == openMark) {
+              openMark = 0;
+              gfx->setTextColor(WHITE, BLACK);
+              continue;
+            }
+          }
+          gfx->print(c);
+        }
       }
-      drawStatus("Click=save  Enter=newline  Bksp=del  Long-click=exit");
+      drawStatus("Click=save  Enter=newline  Bksp=del  Long-click=exit  *b* _i_ ~d~");
     }
     InputEvent e;
     if (!getInput(e, 50)) continue;
@@ -896,97 +939,6 @@ struct WavHeader {
   uint32_t dataSize = 0;
 } __attribute__((packed));
 
-static void recorderApp() {
-  drawTitle("Recorder");
-  gfx->setTextSize(2);
-  gfx->setCursor(8, 40);
-  gfx->println("Click/Enter = start REC");
-  gfx->setTextSize(1);
-  gfx->setCursor(8, 70);
-  gfx->println("Long-click = back");
-  drawStatus("Ready");
-  InputEvent e;
-  while (getInput(e, portMAX_DELAY)) {
-    if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) break;
-    if (e.ev == EV_BACK || e.ev == EV_LEFT || e.ev == EV_LONGSELECT) return;
-  }
-
-  String names[MAX_FILES];
-  int count = 0;
-  listFiles(REC_DIR, names, count, ".wav");
-  int idx = 1;
-  String path;
-  do {
-    path = String(REC_DIR) + "/rec" + String(idx) + ".wav";
-    bool exists = false;
-    for (int i = 0; i < count; i++) if (names[i] == path) { exists = true; break; }
-    if (!exists) break;
-    idx++;
-  } while (idx < 999);
-
-  File f = SD.open(path, FILE_WRITE);
-  if (!f) { drawStatus("SD write error"); delay(1500); return; }
-
-  WavHeader hdr;
-  f.write((uint8_t *)&hdr, sizeof(hdr));
-
-  const int bufSamples = 1600;
-  static int16_t audioBuf[bufSamples * 2];
-  size_t bytesRead = 0;
-  uint32_t totalSamples = 0;
-  uint32_t recStart = millis();
-  bool stop = false;
-
-  drawTitle("REC");
-  gfx->setTextSize(2);
-  gfx->setTextColor(RED, BLACK);
-  gfx->setCursor(8, 40);
-  gfx->println("RECORDING...");
-  gfx->setTextColor(WHITE, BLACK);
-
-  while (!stop) {
-    i2s_read(MIC_I2S_PORT, (char *)audioBuf, bufSamples * sizeof(int16_t), &bytesRead, portMAX_DELAY);
-    int samples = bytesRead / 2;
-    int32_t peak = 1;
-    for (int i = 0; i < samples; i++) {
-      int32_t v = audioBuf[i];
-      if (v < 0) v = -v;
-      if (v > peak) peak = v;
-    }
-    f.write((uint8_t *)audioBuf, bytesRead);
-    totalSamples += samples;
-    while (xQueueReceive(inputQueue, &e, 0) == pdTRUE) {
-      if (e.ev == EV_BACK || e.ev == EV_SELECT || e.ev == EV_LEFT || e.ev == EV_LONGSELECT) { stop = true; }
-    }
-    uint32_t secs = (millis() - recStart) / 1000;
-    gfx->setTextSize(2);
-    gfx->setCursor(8, 70);
-    gfx->printf("%02u:%02u\n", (unsigned)(secs / 60), (unsigned)(secs % 60));
-    gfx->setTextSize(1);
-    gfx->setCursor(8, 100);
-    gfx->printf("samples: %u  peak: %d\n", (unsigned)totalSamples, (int)peak);
-    gfx->setCursor(8, 114);
-    int bars = (peak * 40) / 32768;
-    if (bars > 40) bars = 40;
-    gfx->print("[");
-    for (int i = 0; i < 40; i++) gfx->print(i < bars ? "#" : " ");
-    gfx->println("]");
-    gfx->setCursor(8, 128);
-    gfx->println("Click/Esc = stop & save");
-  }
-  f.flush();
-  uint32_t dataBytes = totalSamples * 2;
-  f.seek(40);
-  f.write((uint8_t *)&dataBytes, 4);
-  uint32_t riffSize = 36 + dataBytes;
-  f.seek(4);
-  f.write((uint8_t *)&riffSize, 4);
-  f.close();
-  drawStatus("Saved to SD");
-  delay(1200);
-}
-
-// Simple beep for the timer alarm; uses its own short-lived I2S session.
 void spkBeep(int ms) {
   i2s_config_t i2s_config = {};
   i2s_config.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
@@ -1020,8 +972,133 @@ void spkBeep(int ms) {
   i2s_driver_uninstall(SPK_I2S_PORT);
 }
 
-// pick an audio file from anywhere on the SD card: folder-by-folder browser.
-// Starts at the root; click a folder to enter it, click a file to select it.
+static void recorderApp() {
+  // ---- idle screen with big record button ----
+  drawTitle("Recorder");
+  gfx->fillRect(0, 26, SCREEN_W, SCREEN_H - 26 - 18, BLACK);
+  // big circular REC button (60px radius, centered)
+  int cx = SCREEN_W / 2, cy = 92;
+  gfx->drawCircle(cx, cy, 52, TERM_DIM);
+  gfx->fillCircle(cx, cy, 44, TERM_SEL_BG);
+  gfx->fillCircle(cx, cy, 34, TERM_RED);
+  gfx->setTextSize(2);
+  gfx->setTextColor(TERM_RED, BLACK);
+  gfx->setCursor(cx - 18, cy + 28);
+  gfx->print("REC");
+  gfx->setTextSize(1);
+  gfx->setTextColor(WHITE, BLACK);
+  gfx->setCursor(0, 160);
+  gfx->print("Click/Enter = start recording");
+  gfx->setCursor(0, 174);
+  gfx->setTextColor(TERM_DIM, BLACK);
+  gfx->print("Long-click = back");
+  drawStatus("Ready");
+
+  InputEvent e;
+  while (getInput(e, portMAX_DELAY)) {
+    if (e.ev == EV_SELECT || e.ev == EV_NEWLINE) break;
+    if (e.ev == EV_BACK || e.ev == EV_LEFT || e.ev == EV_LONGSELECT) return;
+  }
+
+  String names[MAX_FILES];
+  int count = 0;
+  listFiles(REC_DIR, names, count, ".wav");
+  int idx = 1;
+  String path;
+  do {
+    path = String(REC_DIR) + "/rec" + String(idx) + ".wav";
+    bool exists = false;
+    for (int i = 0; i < count; i++) if (names[i] == path) { exists = true; break; }
+    if (!exists) break;
+    idx++;
+  } while (idx < 999);
+  File f = SD.open(path, FILE_WRITE);
+  if (!f) { drawStatus("SD write error"); delay(1500); return; }
+  WavHeader hdr;
+  f.write((uint8_t *)&hdr, sizeof(hdr));
+
+  const int bufSamples = 1600;
+  static int16_t audioBuf[bufSamples * 2];
+  size_t bytesRead = 0;
+  uint32_t totalSamples = 0;
+  uint32_t recStart = millis();
+  bool stop = false;
+
+  // ---- recording screen ----
+  drawTitle("REC");
+  gfx->fillRect(0, 26, SCREEN_W, SCREEN_H - 26 - 18, BLACK);
+  // elapsed time, big
+  gfx->setTextSize(3);
+  gfx->setTextColor(TERM_BRIGHT, BLACK);
+  gfx->setCursor(90, 44);
+  gfx->print("00:00");
+  // level meter frame: 30 bars, 8px tall each
+  const int VU_N = 30, VU_X0 = 20, VU_Y0 = 92, VU_BW = 9;
+  gfx->drawRect(VU_X0 - 3, VU_Y0 - 3, VU_N * VU_BW + 6, 66, TERM_DIM);
+  // stop button
+  int bx = SCREEN_W / 2, by = 190;
+  gfx->fillRoundRect(bx - 60, by - 16, 120, 32, 6, TERM_SEL_BG);
+  gfx->fillRect(bx - 12, by - 9, 24, 18, TERM_RED);
+  gfx->setTextSize(1);
+  gfx->setTextColor(BLACK, TERM_SEL_BG);
+  gfx->setCursor(bx - 22, by - 4);
+  gfx->print("STOP  n");
+
+  while (!stop) {
+    i2s_read(MIC_I2S_PORT, (char *)audioBuf, bufSamples * sizeof(int16_t), &bytesRead, portMAX_DELAY);
+    int samples = bytesRead / 2;
+    int32_t peak = 1;
+    for (int i = 0; i < samples; i++) {
+      int32_t v = audioBuf[i];
+      if (v < 0) v = -v;
+      if (v > peak) peak = v;
+    }
+    f.write((uint8_t *)audioBuf, bytesRead);
+    totalSamples += samples;
+    while (xQueueReceive(inputQueue, &e, 0) == pdTRUE) {
+      if (e.ev == EV_BACK || e.ev == EV_SELECT || e.ev == EV_NEWLINE ||
+          e.ev == EV_LEFT || e.ev == EV_LONGSELECT) { stop = true; }
+    }
+    // elapsed time
+    uint32_t secs = (millis() - recStart) / 1000;
+    gfx->setTextSize(3);
+    gfx->setTextColor(TERM_BRIGHT, BLACK);
+    gfx->setCursor(90, 44);
+    gfx->printf("%02u:%02u", (unsigned)(secs / 60), (unsigned)(secs % 60));
+    // pulsing red REC dot + label
+    bool on = (millis() / 500) & 1;
+    if (on) gfx->fillCircle(56, 54, 7, TERM_RED);
+    else    gfx->fillCircle(56, 54, 7, BLACK);
+    gfx->setTextSize(1);
+    gfx->setTextColor(TERM_RED, BLACK);
+    gfx->setCursor(70, 50);
+    gfx->print("REC");
+    // VU meter: history scrolls left, newest bar on the right
+    static uint8_t vuHist[VU_N];
+    for (int i = 0; i < VU_N - 1; i++) vuHist[i] = vuHist[i + 1];
+    int lvl = (peak * 60) / 32768;
+    if (lvl > 60) lvl = 60;
+    vuHist[VU_N - 1] = lvl;
+    for (int i = 0; i < VU_N; i++) {
+      int h = vuHist[i];
+      uint16_t col = h > 44 ? TERM_RED : h > 30 ? TERM_ACCENT : TERM_GREEN;
+      gfx->fillRect(VU_X0 + i * VU_BW, VU_Y0 + 60 - h, VU_BW - 2, h, col);
+      gfx->fillRect(VU_X0 + i * VU_BW, VU_Y0 + 60 - h - 1, VU_BW - 2, 1, BLACK);
+    }
+    drawStatus("Recording... click = stop & save");
+  }
+  f.flush();
+  uint32_t dataBytes = totalSamples * 2;
+  f.seek(40);
+  f.write((uint8_t *)&dataBytes, 4);
+  uint32_t riffSize = 36 + dataBytes;
+  f.seek(4);
+  f.write((uint8_t *)&riffSize, 4);
+  f.close();
+  drawStatus("Saved to SD");
+  delay(1200);
+}
+
 static bool pickAudioFile(String &outPath) {
   if (!sdOk) return false;
   String path = "/";
@@ -1438,6 +1515,7 @@ static void runTerminal() { terminalApp(); }
 #define CAT_SPORTS -100
 #define CAT_RADIO  -101
 #define CAT_MAP    -102
+#define CAT_CHARGE -103
 static const Category categories[] = {
   {"Work",     catProductivity, 4},
   {"Tools",    catTools,        5},
@@ -1447,6 +1525,7 @@ static const Category categories[] = {
   {"Sports",    (const int *)CAT_SPORTS, 0},  // sportsApp direct
   {"Radio",     (const int *)CAT_RADIO,  0},   // radioApp direct
   {"Map",       (const int *)CAT_MAP,    0},   // mapApp direct
+  {"Charge",    (const int *)CAT_CHARGE,  0},   // chargeMode direct
   {"System",   catSystem,       3},
 };
 #define N_CATS (int)(sizeof(categories)/sizeof(categories[0]))
@@ -1512,6 +1591,15 @@ static void drawCategoryIcon(int cat, int x, int y) {
                       x + 12 + 13 * cosf(ang), y + 12 + 13 * sinf(ang), d);
       }
       break;
+    case 9: {  // Charge: battery + lightning bolt
+      gfx->drawRect(x + 2, y + 7, 18, 10, c);
+      gfx->fillRect(x + 20, y + 10, 2, 4, c);
+      gfx->fillRect(x + 4, y + 9, 6, 6, TERM_BRIGHT);
+      // bolt
+      gfx->fillTriangle(x + 13, y + 5, x + 9, y + 13, x + 12, y + 13, TERM_ACCENT);
+      gfx->fillTriangle(x + 12, y + 13, x + 15, y + 13, x + 11, y + 20, TERM_ACCENT);
+      break;
+    }
     case 8: {  // Map: folded map + route + GPS dot
       gfx->drawRect(x + 2, y + 5, 20, 15, c);
       gfx->drawFastVLine(x + 8, y + 5, 15, d);
@@ -1688,6 +1776,7 @@ static void mainMenu() {
       if ((intptr_t)categories[sel].apps == CAT_SPORTS) sportsApp();
       else if ((intptr_t)categories[sel].apps == CAT_RADIO) radioApp();
       else if ((intptr_t)categories[sel].apps == CAT_MAP) mapApp();
+      else if ((intptr_t)categories[sel].apps == CAT_CHARGE) chargeMode();
       else if (categories[sel].apps == NULL) gamesApp();
       else {
         runGridPage(categories[sel].name, categories[sel].apps, categories[sel].n);

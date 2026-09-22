@@ -440,13 +440,55 @@ void searchApp() {
 
 // ============================ Contacts ============================
 #define CONTACTS_FILE "/contacts/contacts.txt"
+#define CONTACTS_CSV  "/contacts/contacts.csv"
+// CSV helpers: fields are quoted when they contain , " or ; and quotes doubled
+static String csvEscape(const String &s) {
+  bool need = s.indexOf(',') >= 0 || s.indexOf('"') >= 0 || s.indexOf(';') >= 0;
+  if (!need) return s;
+  String out = "\"";
+  for (size_t i = 0; i < s.length(); i++) { if (s[i] == '"') out += "\"\""; else out += s[i]; }
+  out += "\"";
+  return out;
+}
+// Parse one CSV field starting at pos; returns field, advances pos past separator
+static String csvField(const String &line, int &pos) {
+  String out;
+  if (pos < (int)line.length() && line[pos] == '"') {
+    pos++;
+    while (pos < (int)line.length()) {
+      if (line[pos] == '"') {
+        if (pos + 1 < (int)line.length() && line[pos + 1] == '"') { out += '"'; pos += 2; }
+        else { pos++; break; }
+      } else { out += line[pos++]; }
+    }
+  }
+  while (pos < (int)line.length() && line[pos] != ',') out += line[pos++];
+  if (pos < (int)line.length()) pos++;
+  return out;
+}
 void contactsApp() {
   bool needsRedraw = true;
   int sel = 0;
-  // Load contacts: "Name<TAB>Phone<TAB>Email" per line
+  // Load contacts: CSV (Name,Phone,Email) preferred; legacy TAB format fallback
   static String names[32], phones[32], emails[32];
   int n = 0;
-  if (sdOk && SD.exists(CONTACTS_FILE)) {
+  bool loadedCsv = false;
+  if (sdOk && SD.exists(CONTACTS_CSV)) {
+    File f = SD.open(CONTACTS_CSV, FILE_READ);
+    while (f.available() && n < 32) {
+      String line = f.readStringUntil('\n'); line.trim();
+      if (!line.length()) continue;
+      if (!loadedCsv && (line.startsWith("Name") || line.startsWith("\"Name"))) { loadedCsv = true; continue; }
+      int pos = 0;
+      names[n] = csvField(line, pos);
+      phones[n] = csvField(line, pos);
+      emails[n] = csvField(line, pos);
+      n++;
+    }
+    f.close();
+    loadedCsv = true;
+  }
+  if (!loadedCsv && sdOk && SD.exists(CONTACTS_FILE)) {
     File f = SD.open(CONTACTS_FILE, FILE_READ);
     while (f.available() && n < 32) {
       String line = f.readStringUntil('\n'); line.trim();
@@ -540,12 +582,13 @@ void contactsApp() {
             else if (w.ev == PDA_EV_CHAR && (w.ch == 's' || w.ch == 'S')) {
               // rewrite the whole file with this contact updated
               if (sdOk) {
-                File f = SD.open(CONTACTS_FILE, FILE_WRITE);
+                File f = SD.open(CONTACTS_CSV, FILE_WRITE);
                 if (f) {
+                  f.print("Name,Phone,Email\n");
                   for (int i = 0; i < n; i++) {
-                    f.print(names[i]); f.print('\t');
-                    f.print(phones[i]); f.print('\t');
-                    f.print(emails[i]); f.print('\n');
+                    f.print(csvEscape(names[i])); f.print(',');
+                    f.print(csvEscape(phones[i])); f.print(',');
+                    f.print(csvEscape(emails[i])); f.print('\n');
                   }
                   f.close();
                 }
@@ -569,8 +612,9 @@ void contactsApp() {
             sel = n - 1;
             if (sdOk) {
               if (!SD.exists("/contacts")) SD.mkdir("/contacts");
-              File f = SD.open(CONTACTS_FILE, FILE_APPEND);
-              if (f) { f.print(name); f.print('\t'); f.print(phone); f.print('\t'); f.print(email); f.print('\n'); f.close(); }
+              if (!SD.exists(CONTACTS_CSV)) { File hf = SD.open(CONTACTS_CSV, FILE_WRITE); if (hf) { hf.print("Name,Phone,Email\n"); hf.close(); } }
+              File f = SD.open(CONTACTS_CSV, FILE_APPEND);
+              if (f) { f.print(csvEscape(name)); f.print(','); f.print(csvEscape(phone)); f.print(','); f.print(csvEscape(email)); f.print('\n'); f.close(); }
             }
           }
           needsRedraw = true;
@@ -580,8 +624,8 @@ void contactsApp() {
             n--;
             if (sel >= n && sel > 0) sel--;
             if (sdOk) {
-              File f = SD.open(CONTACTS_FILE, FILE_WRITE);
-              if (f) { for (int i = 0; i < n; i++) { f.print(names[i]); f.print('\t'); f.print(phones[i]); f.print('\t'); f.print(emails[i]); f.print('\n'); } f.close(); }
+              File f = SD.open(CONTACTS_CSV, FILE_WRITE);
+              if (f) { f.print("Name,Phone,Email\n"); for (int i = 0; i < n; i++) { f.print(csvEscape(names[i])); f.print(','); f.print(csvEscape(phones[i])); f.print(','); f.print(csvEscape(emails[i])); f.print('\n'); } f.close(); }
             }
             needsRedraw = true;
           }

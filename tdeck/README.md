@@ -157,8 +157,21 @@ network coverage — no attack tooling.
 - **Flappy** — Flappy-bird clone: click/Enter flaps; a point per pipe
   passed, high score kept in stats (`n` or click restarts after a crash,
   long-click exits).
-- **Stats** — wins/losses per game plus the Snake and Flappy high scores,
-  persisted to `/games/stats.txt`; **r** resets.
+- **Tetris** — l/r move, up rotates, down soft-drops; lines clear,
+  speed ramps up. High score in stats.
+- **Breakout** — l/r paddle, click launches; angle depends on where the
+  ball hits the paddle. High score in stats.
+- **2048** — trackball slides tiles; equal tiles merge. High score in
+  stats; click starts a new game.
+- **Mines** — 9x9, 10 mines, first click is always safe; `f` flags,
+  click reveals. Win when every safe cell is open.
+- **Pong** — u/d paddle vs an AI, first to 7; the AI tracks the ball
+  with a speed cap so it's beatable. Result recorded in stats.
+- **Reversi** — 8x8 Othello vs a corner-preferring greedy AI; legal
+  moves show as rings, flips are automatic. Result recorded in stats.
+- **Stats** — wins/losses for versus games plus high scores (Snake,
+  Flappy, Tetris, Breakout, 2048), persisted to `/games/stats.txt`;
+  **r** resets. The games hub pages 8 tiles at a time (pg x/y indicator).
 
 ### Sports
 

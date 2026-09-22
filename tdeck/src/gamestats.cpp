@@ -1,4 +1,9 @@
-/** * Game statistics: per-game wins/losses + Snake high score. * Persisted to /games/stats.txt on SD as one line per game: *   chess W 3 L 5 *   snake hi 120 */
+/**
+ * Game statistics: per-game wins/losses + persistent high scores.
+ * Persisted to /games/stats.txt on SD, one line per game:
+ *   chess W 3 L 5
+ *   snake hi 120
+ */
 #include <Arduino.h>
 #include <SD.h>
 #include <Arduino_GFX_Library.h>
@@ -12,13 +17,12 @@ extern bool sdOk;
 
 static int statsWins[GS_N] = {0};
 static int statsLosses[GS_N] = {0};
-static int snakeHi = 0;
-static int flappyHi = 0;
+static int statsHi[GS_N] = {0};
 static bool statsLoaded = false;
 
 static const char *const gsNames[GS_N] = {
-  "Chess", "Go", "Solitaire", "Checkers", "Snake"
-};
+  "Chess", "Go", "Solitaire", "Checkers", "Snake", "Flappy",
+  "Tetris", "Breakout", "2048", "Mines", "Pong", "Reversi"};
 
 static void gsLoad() {
   if (statsLoaded) return;
@@ -29,24 +33,28 @@ static void gsLoad() {
   while (f.available()) {
     String line = f.readStringUntil('\n');
     line.trim();
-    if (line.startsWith("snake hi ")) {
-      snakeHi = line.substring(9).toInt();
-      continue;
-    }
-    if (line.startsWith("flappy hi ")) {
-      flappyHi = line.substring(10).toInt();
-      continue;
-    }
     int w = line.indexOf(" W ");
-    if (w < 0) continue;
-    int l = line.indexOf(" L ", w);
-    if (l < 0) continue;
-    String name = line.substring(0, w);
-    for (int i = 0; i < GS_N; i++) {
-      if (name.equals(gsNames[i])) {
-        statsWins[i] = line.substring(w + 3, l).toInt();
-        statsLosses[i] = line.substring(l + 3).toInt();
-        break;
+    if (w >= 0) {
+      int l = line.indexOf(" L ", w);
+      if (l < 0) continue;
+      String name = line.substring(0, w);
+      for (int i = 0; i < GS_N; i++) {
+        if (name.equalsIgnoreCase(gsNames[i])) {
+          statsWins[i] = line.substring(w + 3, l).toInt();
+          statsLosses[i] = line.substring(l + 3).toInt();
+          break;
+        }
+      }
+      continue;
+    }
+    int hi = line.indexOf(" hi ");
+    if (hi >= 0) {
+      String name = line.substring(0, hi);
+      for (int i = 0; i < GS_N; i++) {
+        if (name.equalsIgnoreCase(gsNames[i])) {
+          statsHi[i] = line.substring(hi + 4).toInt();
+          break;
+        }
       }
     }
   }
@@ -59,8 +67,8 @@ static void gsSave() {
   File f = SD.open("/games/stats.txt", FILE_WRITE);
   if (!f) return;
   for (int i = 0; i < GS_N; i++) {
-    if (i == GS_SNAKE) { f.printf("Snake hi %d\n", snakeHi); continue; }
-    if (i == GS_FLAPPY) { f.printf("Flappy hi %d\n", flappyHi); continue; }
+    if (statsHi[i] > 0)
+      f.printf("%s hi %d\n", gsNames[i], statsHi[i]);
     if (statsWins[i] || statsLosses[i])
       f.printf("%s W %d L %d\n", gsNames[i], statsWins[i], statsLosses[i]);
   }
@@ -77,15 +85,13 @@ void gsRecordResult(int game, bool win) {
 
 void gsRecordScore(int game, int score) {
   gsLoad();
-  if (game == GS_SNAKE) {
-    if (score > snakeHi) { snakeHi = score; gsSave(); }
-  } else if (game == GS_FLAPPY) {
-    if (score > flappyHi) { flappyHi = score; gsSave(); }
-  }
+  if (game < 0 || game >= GS_N) return;
+  if (score > statsHi[game]) { statsHi[game] = score; gsSave(); }
 }
 
-int gsGetSnakeHi() { gsLoad(); return snakeHi; }
-int gsGetFlappyHi() { gsLoad(); return flappyHi; }
+int gsGetHi(int game) { gsLoad(); return (game >= 0 && game < GS_N) ? statsHi[game] : 0; }
+int gsGetSnakeHi() { return gsGetHi(GS_SNAKE); }
+int gsGetFlappyHi() { return gsGetHi(GS_FLAPPY); }
 
 void gsStatsScreen() {
   gsLoad();
@@ -95,26 +101,21 @@ void gsStatsScreen() {
   gfx->setCursor(8, 6);
   gfx->print("Game stats");
   gfx->setTextSize(1);
-  int y = 36;
+  int y = 32;
   gfx->setTextColor(TERM_DIM, BLACK);
   gfx->setCursor(8, y);
-  gfx->print("Game        W    L");
-  y += 16;
+  gfx->print("Game        W    L / hi");
+  y += 14;
   for (int i = 0; i < GS_N; i++) {
     gfx->setTextColor(TERM_BRIGHT, BLACK);
     gfx->setCursor(8, y);
     gfx->print(gsNames[i]);
-    if (i == GS_SNAKE) {
-      gfx->setCursor(120, y);
-      gfx->printf("hi %d", snakeHi);
-    } else if (i == GS_FLAPPY) {
-      gfx->setCursor(120, y);
-      gfx->printf("hi %d", flappyHi);
-    } else {
-      gfx->setCursor(120, y);
+    gfx->setCursor(120, y);
+    if (statsHi[i] > 0 || (statsWins[i] == 0 && statsLosses[i] == 0))
+      gfx->printf("hi %d", statsHi[i]);
+    else
       gfx->printf("%-5d%-5d", statsWins[i], statsLosses[i]);
-    }
-    y += 16;
+    y += 14;
   }
   gfx->setTextColor(TERM_DIM, BLACK);
   gfx->setCursor(4, SCREEN_H - 10);
@@ -123,9 +124,7 @@ void gsStatsScreen() {
     InputEventP e;
     if (!pdaGetInput(e, 50)) continue;
     if (e.ev == PDA_EV_CHAR && (e.ch == 'r' || e.ch == 'R')) {
-      for (int i = 0; i < GS_N; i++) { statsWins[i] = 0; statsLosses[i] = 0; }
-      snakeHi = 0;
-      flappyHi = 0;
+      for (int i = 0; i < GS_N; i++) { statsWins[i] = 0; statsLosses[i] = 0; statsHi[i] = 0; }
       gsSave();
       gsStatsScreen();
       return;

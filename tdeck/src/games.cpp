@@ -1148,10 +1148,13 @@ void flappyApp() {
 
 // ============================ Games hub ============================
 static const char *const gameNames[] = {
-  "Chess", "Go", "Solitaire", "Checkers", "Snake", "Flappy", "Stats"
+  "Chess", "Go", "Solit", "Chkrs", "Snake", "Flappy",
+  "Tetris", "Brkout", "2048", "Mines", "Pong", "Revrsi", "Stats"
 };
 static void (*const gameRun[])(void) = {
-  chessApp, goApp, solitaireApp, checkersApp, snakeApp, flappyApp, gsStatsScreen
+  chessApp, goApp, solitaireApp, checkersApp, snakeApp, flappyApp,
+  tetrisApp, breakoutApp, game2048App, minesApp, pongApp, reversiApp,
+  gsStatsScreen
 };
 #define N_GAMES (int)(sizeof(gameNames)/sizeof(gameNames[0]))
 
@@ -1201,7 +1204,50 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->fillCircle(x + 10, y + 11, 1, BLACK);
       gfx->fillTriangle(x + 8, y + 12, x + 12, y + 13, x + 8, y + 14, TERM_BRIGHT);
       break;
-    case 6:  // Stats: trophy
+    case 6:  // Tetris: stacked blocks
+      gfx->fillRect(x + 4, y + 15, 5, 5, c);
+      gfx->fillRect(x + 10, y + 15, 5, 5, TERM_BRIGHT);
+      gfx->fillRect(x + 16, y + 15, 5, 5, d);
+      gfx->fillRect(x + 10, y + 9, 5, 5, c);
+      gfx->fillRect(x + 16, y + 9, 5, 5, TERM_BRIGHT);
+      gfx->fillRect(x + 16, y + 3, 5, 5, c);
+      break;
+    case 7:  // Breakout: paddle + ball + brick
+      gfx->fillRect(x + 3, y + 5, 6, 4, c);
+      gfx->fillRect(x + 11, y + 5, 6, 4, TERM_BRIGHT);
+      gfx->fillRect(x + 19, y + 5, 4, 4, d);
+      gfx->fillCircle(x + 12, y + 14, 2, TERM_ACCENT);
+      gfx->fillRect(x + 6, y + 19, 12, 3, TERM_BRIGHT);
+      break;
+    case 8:  // 2048: numbered tile
+      gfx->drawRect(x + 3, y + 3, 18, 18, c);
+      gfx->setTextSize(1);
+      gfx->setTextColor(TERM_BRIGHT, BLACK);
+      gfx->setCursor(x + 5, y + 9);
+      gfx->print("2048");
+      break;
+    case 9:  // Mines: mine + flag
+      gfx->fillCircle(x + 9, y + 12, 5, TERM_ACCENT);
+      gfx->drawFastVLine(x + 9, y + 5, 4, TERM_ACCENT);
+      gfx->drawFastHLine(x + 4, y + 12, 10, TERM_ACCENT);
+      gfx->fillTriangle(x + 16, y + 8, x + 21, y + 11, x + 16, y + 14, TERM_BRIGHT);
+      gfx->drawFastVLine(x + 15, y + 8, 9, TERM_BRIGHT);
+      break;
+    case 10:  // Pong: paddles + ball
+      gfx->fillRect(x + 4, y + 7, 3, 10, TERM_BRIGHT);
+      gfx->fillRect(x + 18, y + 5, 3, 10, TERM_GREEN);
+      gfx->fillCircle(x + 12, y + 12, 2, TERM_ACCENT);
+      gfx->drawFastVLine(x + 12, y + 3, 18, TERM_DIM);
+      break;
+    case 11:  // Reversi: disc grid
+      gfx->drawRect(x + 3, y + 4, 18, 16, c);
+      gfx->drawFastHLine(x + 3, y + 12, 18, d);
+      gfx->drawFastVLine(x + 12, y + 4, 16, d);
+      gfx->fillCircle(x + 7, y + 8, 3, TERM_BRIGHT);
+      gfx->drawCircle(x + 17, y + 8, 3, TERM_GREEN);
+      gfx->fillCircle(x + 17, y + 17, 3, TERM_BRIGHT);
+      break;
+    case 12:  // Stats: trophy
       gfx->drawRect(x + 7, y + 5, 10, 7, c);
       gfx->drawFastHLine(x + 7, y + 5, 3, c);  // left handle
       gfx->drawFastVLine(x + 7, y + 6, 4, c);
@@ -1213,13 +1259,18 @@ static void drawGameIcon(int idx, int x, int y) {
   }
 }
 
-#define GAME_COLS 3
+#define GAME_COLS 4
 #define GAME_CELL_W (SCREEN_W / GAME_COLS)
 #define GAME_CELL_H ((SCREEN_H - 18 - 26) / 2)
+#define GAME_ROWS_VIS 2
+#define GAME_PER_PAGE (GAME_COLS * GAME_ROWS_VIS)
 
-static void drawGameCell(int i, bool selected) {
-  int x = (i % GAME_COLS) * GAME_CELL_W;
-  int y = 26 + (i / GAME_COLS) * GAME_CELL_H;
+// drawGameCell(i, selected, page, showLabel): page-relative cell
+static void drawGameCell(int i, bool selected, int page) {
+  int pi = i - page * GAME_PER_PAGE;
+  if (pi < 0 || pi >= GAME_PER_PAGE) return;
+  int x = (pi % GAME_COLS) * GAME_CELL_W;
+  int y = 26 + (pi / GAME_COLS) * GAME_CELL_H;
   uint16_t bg = selected ? TERM_SEL_BG : BLACK;
   gfx->fillRect(x, y, GAME_CELL_W, GAME_CELL_H, bg);
   drawGameIcon(i, x + (GAME_CELL_W - 24) / 2, y + (GAME_CELL_H - 24 - 10) / 2);
@@ -1228,6 +1279,14 @@ static void drawGameCell(int i, bool selected) {
   int tw = strlen(gameNames[i]) * 6;
   gfx->setCursor(x + (GAME_CELL_W - tw) / 2, y + GAME_CELL_H - 12);
   gfx->print(gameNames[i]);
+}
+
+static void drawGamePageDots(int page, int pages) {
+  if (pages <= 1) return;
+  gfx->setTextSize(1);
+  gfx->setTextColor(TERM_DIM, BLACK);
+  gfx->setCursor(SCREEN_W - 40, SCREEN_H - 10);
+  gfx->printf("pg %d/%d", page + 1, pages);
 }
 
 void gamesApp() {
@@ -1240,16 +1299,19 @@ void gamesApp() {
   gfx->setTextColor(TERM_DIM, BLACK);
   gfx->setCursor(4, SCREEN_H - 10);
   gfx->print("click=play Long=back");
-  int sel = 0, lastSel = -1;
+  int pages = (N_GAMES + GAME_PER_PAGE - 1) / GAME_PER_PAGE;
+  int page = 0, sel = 0, lastSel = -1;
   bool full = true;
   while (true) {
     if (full) {
-      for (int i = 0; i < N_GAMES; i++) drawGameCell(i, i == sel);
+      gfx->fillRect(0, 26, SCREEN_W, SCREEN_H - 18 - 26, BLACK);
+      for (int i = 0; i < N_GAMES; i++) drawGameCell(i, i == sel, page);
+      drawGamePageDots(page, pages);
       lastSel = sel;
       full = false;
     } else if (sel != lastSel) {
-      drawGameCell(lastSel, false);
-      drawGameCell(sel, true);
+      drawGameCell(lastSel, false, page);
+      drawGameCell(sel, true, page);
       lastSel = sel;
     }
     InputEventP e;
@@ -1263,5 +1325,8 @@ void gamesApp() {
       full = true;
     }
     else if (e.ev == PDA_EV_LONGSELECT || e.ev == PDA_EV_BACK) return;
+    int newPage = sel / GAME_PER_PAGE;
+    if (newPage != page) { page = newPage; full = true; }
   }
 }
+

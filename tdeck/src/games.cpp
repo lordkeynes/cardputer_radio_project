@@ -536,21 +536,53 @@ static const char *rankStr(int r) {
   return ranks[r];
 }
 
+// tiny suit glyphs drawn with primitives (5x6 area at x,y)
+static void drawSuitGlyph(Arduino_GFX *g, int su, int x, int y, uint16_t col) {
+  switch (su) {
+    case 0:  // spade
+      g->fillRect(x + 1, y + 4, 3, 2, col);
+      g->fillTriangle(x, y + 3, x + 5, y + 3, x + 2, y - 1, col);
+      g->fillTriangle(x, y + 3, x + 5, y + 3, x + 3, y - 1, col);
+      break;
+    case 1:  // heart
+      g->fillCircle(x + 1, y + 1, 2, col);
+      g->fillCircle(x + 4, y + 1, 2, col);
+      g->fillTriangle(x - 1, y + 2, x + 6, y + 2, x + 2, y + 6, col);
+      break;
+    case 2:  // diamond
+      g->fillTriangle(x, y + 2, x + 5, y + 2, x + 2, y - 2, col);
+      g->fillTriangle(x, y + 2, x + 5, y + 2, x + 3, y + 6, col);
+      break;
+    case 3:  // club
+      g->fillCircle(x + 2, y, 2, col);
+      g->fillCircle(x, y + 3, 2, col);
+      g->fillCircle(x + 5, y + 3, 2, col);
+      g->fillRect(x + 1, y + 4, 3, 2, col);
+      break;
+  }
+}
+
 static void drawCard(Arduino_GFX *g, int card, int x, int y, bool selected) {
-  // 30x40 card
-  uint16_t border = selected ? TERM_ACCENT : TERM_DIM;
-  g->drawRect(x, y, 30, 40, border);
-  if (card == 0) return;
+  // 30x40 card with white face
+  if (card == 0) {
+    // empty slot outline
+    g->drawRect(x, y, 30, 40, selected ? TERM_ACCENT : TERM_DIM);
+    return;
+  }
   int r = cardRank(card), su = cardSuit(card);
-  uint16_t col = cardColor(card) ? TERM_RED : TERM_GREEN;
+  uint16_t col = cardColor(card) ? RGB565(0xd8, 0x28, 0x28) : RGB565(0x18, 0x18, 0x18);
+  // face + border
+  g->fillRect(x + 1, y + 1, 28, 38, RGB565(0xf4, 0xf0, 0xe2));
+  g->drawRect(x, y, 30, 40, selected ? TERM_ACCENT : RGB565(0x60, 0x60, 0x60));
+  // corner rank + suit
   g->setTextSize(1);
-  g->setTextColor(col, BLACK);
+  g->setTextColor(col, RGB565(0xf4, 0xf0, 0xe2));
   g->setCursor(x + 3, y + 3);
   g->print(rankStr(r));
-  g->setCursor(x + 12, y + 3);
-  const char *suits = "SHDC";
-  g->print(suits[su]);
-  g->setCursor(x + 3, y + 30);
+  drawSuitGlyph(g, su, x + 2, y + 14, col);
+  // bottom-right inverted mini suit
+  drawSuitGlyph(g, su, x + 21, y + 32, col);
+  g->setCursor(x + 20, y + 28);
   g->print(rankStr(r));
 }
 
@@ -565,10 +597,19 @@ static bool canStackFoundation(int moving, int fndSuit, int fndTop) {
 }
 
 static void solDraw(Solitaire &g) {
-  gfx->fillScreen(BLACK);
+  gfx->fillScreen(RGB565(0x07, 0x2a, 0x14));   // felt green
   // top row: stock, waste, 4 foundations
-  drawCard(gfx, g.stockN ? -1 : 0, 8, 6, g.cursor == 7);
-  if (g.stockN) { gfx->setTextSize(1); gfx->setTextColor(TERM_DIM, BLACK); gfx->setCursor(16, 22); gfx->print("$"); }
+  // stock: card back with lattice
+  if (g.stockN) {
+    gfx->fillRect(9, 7, 28, 38, RGB565(0x8a, 0x2a, 0x2a));
+    gfx->drawRect(8, 6, 30, 40, g.cursor == 7 ? TERM_ACCENT : RGB565(0x60, 0x20, 0x20));
+    for (int i = 0; i < 4; i++) {
+      gfx->drawFastHLine(13, 13 + i * 8, 20, RGB565(0xc0, 0x50, 0x50));
+      gfx->drawFastHLine(13, 17 + i * 8, 20, RGB565(0xc0, 0x50, 0x50));
+    }
+  } else {
+    drawCard(gfx, 0, 8, 6, g.cursor == 7);
+  }
   drawCard(gfx, g.wasteN ? g.waste[g.wasteN-1] : 0, 46, 6, g.cursor == 8 || g.wasteSel);
   for (int i = 0; i < 4; i++) {
     drawCard(gfx, g.found[i], 130 + i * 40, 6, g.cursor == 9 + i);
@@ -577,6 +618,8 @@ static void solDraw(Solitaire &g) {
   // tableau
   for (int c = 0; c < 7; c++) {
     int x = 8 + c * 44;
+    // slot outline behind the column
+    gfx->drawRect(x, 54, 30, 40, RGB565(0x0a, 0x3a, 0x1c));
     for (int k = 0; k < g.tabN[c]; k++) {
       bool sel = (g.colSel[c] >= 0 && k >= g.colSel[c]);
       drawCard(gfx, g.tab[c][k], x, 54 + k * 13, sel || (g.cursor == c && k == g.tabN[c]-1));
@@ -1054,47 +1097,84 @@ static void flappyReset(Flappy &f) {
   f.started = false;
 }
 
+// little flappy bird sprite (body ~11x9), wing flips with flapPhase
+static void drawBird(Arduino_GFX *g, int x, int y, int flapPhase) {
+  const uint16_t BODY = RGB565(0xf2, 0xd3, 0x8a);
+  const uint16_t WING = RGB565(0xd9, 0xa4, 0x4a);
+  const uint16_t BEAK = RGB565(0xe8, 0x7a, 0x2a);
+  const uint16_t OUTL = RGB565(0x50, 0x3a, 0x10);
+  g->fillCircle(x, y, 5, BODY);                       // body
+  g->drawCircle(x, y, 5, OUTL);
+  g->fillCircle(x + 3, y - 1, 2, RGB565(0xff, 0xff, 0xff));   // eye white
+  g->fillRect(x + 3, y - 1, 1, 2, RGB565(0x10, 0x10, 0x10));  // pupil
+  // beak
+  g->fillTriangle(x + 5, y - 1, x + 9, y + 1, x + 5, y + 3, BEAK);
+  // wing: up or down depending on flap phase
+  if (flapPhase) g->fillTriangle(x - 3, y, x + 2, y, x - 1, y - 5, WING);
+  else           g->fillTriangle(x - 3, y + 1, x + 2, y + 1, x - 1, y + 6, WING);
+  // tail
+  g->fillTriangle(x - 4, y - 2, x - 4, y + 2, x - 8, y, WING);
+}
+
 static void flappyDraw(Flappy &f, bool full) {
+  const uint16_t SKY   = RGB565(0x4e, 0xc0, 0xe8);
+  const uint16_t CLOUD = RGB565(0xd8, 0xf0, 0xf8);
+  const uint16_t GROUND = RGB565(0xd8, 0xb0, 0x5a);
+  const uint16_t DIRT  = RGB565(0xa8, 0x78, 0x38);
   if (full) {
-    gfx->fillScreen(BLACK);
+    gfx->fillScreen(SKY);
     gfx->setTextSize(1);
-    gfx->setTextColor(TERM_DIM, BLACK);
+    gfx->setTextColor(RGB565(0x10, 0x30, 0x40), SKY);
     gfx->setCursor(4, SCREEN_H - 10);
     gfx->print("click=flap Long=back");
   }
   // score
-  gfx->fillRect(SCREEN_W / 2 - 30, 4, 60, 16, BLACK);
+  gfx->fillRect(SCREEN_W / 2 - 30, 4, 60, 16, SKY);
   gfx->setTextSize(2);
-  gfx->setTextColor(TERM_BRIGHT, BLACK);
+  gfx->setTextColor(RGB565(0xff, 0xff, 0xff), SKY);
   gfx->setCursor(SCREEN_W / 2 - 12, 4);
   gfx->print(f.score);
   // pipe: erase the strip behind it, then redraw both pipe bodies
   int px = (int)f.pipeX;
-  gfx->fillRect(px + FL_PIPE_W, 20, (int)FL_SPEED + 1, SCREEN_H - 40, BLACK);
-  gfx->fillRect(px, 20, FL_PIPE_W, f.gapY - 20, TERM_GREEN);
+  gfx->fillRect(px + FL_PIPE_W, 20, (int)FL_SPEED + 1, SCREEN_H - 40, SKY);
+  const uint16_t PIPE = RGB565(0x58, 0xc4, 0x30);
+  gfx->fillRect(px, 20, FL_PIPE_W, f.gapY - 20, PIPE);
   gfx->fillRect(px, f.gapY + FL_GAP, FL_PIPE_W,
-                SCREEN_H - 20 - f.gapY - FL_GAP, TERM_GREEN);
+                SCREEN_H - 20 - f.gapY - FL_GAP, PIPE);
+  // pipe lips (wider caps)
+  gfx->fillRect(px - 2, f.gapY - 12, FL_PIPE_W + 4, 12, PIPE);
+  gfx->fillRect(px - 2, f.gapY + FL_GAP, FL_PIPE_W + 4, 12, PIPE);
+  // ground strip
+  gfx->fillRect(0, SCREEN_H - 12, SCREEN_W, 4, GROUND);
+  gfx->fillRect(0, SCREEN_H - 8, SCREEN_W, 8, DIRT);
+  // clouds (simple parallax puffs, redrawn each frame)
+  for (int i = 0; i < 3; i++) {
+    int cx = (SCREEN_W - ((int)(millis() / 60) + i * 110)) % (SCREEN_W + 40) - 20;
+    int cy = 34 + (i % 2) * 26;
+    gfx->fillCircle(cx, cy, 7, CLOUD);
+    gfx->fillCircle(cx + 8, cy + 2, 5, CLOUD);
+    gfx->fillCircle(cx - 8, cy + 2, 5, CLOUD);
+  }
   // bird (erase old position first)
   static int lastBy = -1;
   int by = (int)f.birdY;
   if (lastBy >= 0 && lastBy != by)
-    gfx->fillCircle(60, lastBy, 5, BLACK);
-  gfx->fillCircle(60, by, 5, TERM_ACCENT);
-  gfx->fillCircle(62, by - 1, 2, BLACK);   // eye
+    gfx->fillCircle(60, lastBy, 8, SKY);
+  drawBird(gfx, 60, by, (millis() / 120) & 1);
   lastBy = by;
   if (f.dead) {
     gfx->setTextSize(2);
-    gfx->setTextColor(TERM_RED, BLACK);
+    gfx->setTextColor(RGB565(0xd0, 0x20, 0x20), SKY);
     gfx->setCursor(SCREEN_W / 2 - 40, SCREEN_H / 2 - 20);
     gfx->print("DEAD!");
     gfx->setTextSize(1);
-    gfx->setTextColor(TERM_BRIGHT, BLACK);
+    gfx->setTextColor(RGB565(0x10, 0x30, 0x40), SKY);
     gfx->setCursor(SCREEN_W / 2 - 60, SCREEN_H / 2 + 6);
     gfx->print("click or n = play again");
   }
   if (!f.started && !f.dead) {
     gfx->setTextSize(1);
-    gfx->setTextColor(TERM_BRIGHT, BLACK);
+    gfx->setTextColor(RGB565(0x10, 0x30, 0x40), SKY);
     gfx->setCursor(SCREEN_W / 2 - 60, SCREEN_H / 2 + 30);
     gfx->print("click to start");
   }
@@ -1201,13 +1281,19 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->drawFastHLine(x + 8, y + 17, 5, TERM_BRIGHT);
       gfx->fillCircle(x + 6, y + 6, 2, TERM_ACCENT);
       break;
-    case 5:  // Flappy: bird + pipes
-      gfx->fillRect(x + 15, y + 3, 4, 8, c);
-      gfx->fillRect(x + 15, y + 14, 4, 7, c);
-      gfx->fillCircle(x + 8, y + 12, 4, TERM_ACCENT);
-      gfx->fillCircle(x + 10, y + 11, 1, BLACK);
-      gfx->fillTriangle(x + 8, y + 12, x + 12, y + 13, x + 8, y + 14, TERM_BRIGHT);
+    case 5: {  // Flappy: bird between pipes
+      gfx->fillRect(x + 16, y + 2, 4, 7, c);
+      gfx->fillRect(x + 16, y + 15, 4, 7, c);
+      const uint16_t BODY = RGB565(0xf2, 0xd3, 0x8a);
+      gfx->fillCircle(x + 8, y + 12, 5, BODY);
+      gfx->fillCircle(x + 11, y + 11, 2, RGB565(0xff, 0xff, 0xff));
+      gfx->fillRect(x + 11, y + 11, 1, 2, RGB565(0x10, 0x10, 0x10));
+      gfx->fillTriangle(x + 13, y + 11, x + 17, y + 13, x + 13, y + 15,
+                        RGB565(0xe8, 0x7a, 0x2a));
+      gfx->fillTriangle(x + 4, y + 12, x + 9, y + 12, x + 6, y + 8,
+                        RGB565(0xd9, 0xa4, 0x4a));
       break;
+    }
     case 6:  // Tetris: stacked blocks
       gfx->fillRect(x + 4, y + 15, 5, 5, c);
       gfx->fillRect(x + 10, y + 15, 5, 5, TERM_BRIGHT);
@@ -1223,13 +1309,22 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->fillCircle(x + 12, y + 14, 2, TERM_ACCENT);
       gfx->fillRect(x + 6, y + 19, 12, 3, TERM_BRIGHT);
       break;
-    case 8:  // 2048: numbered tile
-      gfx->drawRect(x + 3, y + 3, 18, 18, c);
+    case 8: {  // 2048: two stacked value tiles
+      gfx->fillRect(x + 3, y + 4, 9, 9, TERM_BRIGHT);
+      gfx->fillRect(x + 13, y + 4, 9, 9, TERM_ACCENT);
+      gfx->fillRect(x + 3, y + 14, 9, 9, TERM_ACCENT);
+      gfx->drawRect(x + 13, y + 14, 9, 9, c);
       gfx->setTextSize(1);
-      gfx->setTextColor(TERM_BRIGHT, BLACK);
-      gfx->setCursor(x + 5, y + 9);
-      gfx->print("2048");
+      gfx->setTextColor(BLACK, TERM_BRIGHT);
+      gfx->setCursor(x + 5, y + 7);
+      gfx->print("2");
+      gfx->setTextColor(BLACK, TERM_ACCENT);
+      gfx->setCursor(x + 15, y + 7);
+      gfx->print("4");
+      gfx->setCursor(x + 5, y + 17);
+      gfx->print("8");
       break;
+    }
     case 9:  // Mines: mine + flag
       gfx->fillCircle(x + 9, y + 12, 5, TERM_ACCENT);
       gfx->drawFastVLine(x + 9, y + 5, 4, TERM_ACCENT);
@@ -1276,13 +1371,21 @@ static void drawGameIcon(int idx, int x, int y) {
       gfx->drawLine(x + 6, y + 3, x + 2, y + 7, TERM_BRIGHT);
       break;
     }
-    case 15: {  // Wordle: 5 letter tiles
+    case 15: {  // Wordle: guess row, middle tile "hit"
       for (int i = 0; i < 5; i++) {
-        gfx->drawRect(x + 1 + i * 5, y + 8, 4, 8,
-                      i == 0 ? TERM_BRIGHT : c);
-        gfx->fillRect(x + 1 + (i == 2 ? 5 : 0), y + 16, 3, 3,
-                      i == 2 ? TERM_BRIGHT : TERM_DIM);
+        int tx = x + 1 + i * 5;
+        if (i == 2) {
+          gfx->fillRect(tx, y + 8, 4, 9, TERM_BRIGHT);
+        } else if (i == 1) {
+          gfx->fillRect(tx, y + 8, 4, 9, TERM_ACCENT);
+        } else if (i == 3) {
+          gfx->drawRect(tx, y + 8, 4, 9, TERM_ACCENT);
+        } else {
+          gfx->drawRect(tx, y + 8, 4, 9, d);
+        }
       }
+      // small keyboard hint below
+      gfx->drawFastHLine(x + 3, y + 20, 18, d);
       break;
     }
     case 16: {  // Sudoku: 3x3 grid with digits

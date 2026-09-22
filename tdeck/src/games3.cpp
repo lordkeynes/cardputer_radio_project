@@ -172,10 +172,10 @@ void connect4App() {
 
 // ============================ Battleship ============================
 #define BS_N 8
-#define BS_CELL 20
-#define BS_OX 24
-#define BS_OY 34
-#define BS_OX2 176
+#define BS_CELL 18
+#define BS_OY 42
+#define BS_OX 14
+#define BS_OX2 (BS_OX + BS_N * BS_CELL + 16)
 
 struct Battleship {
   uint8_t ships[2][BS_N][BS_N];   // [0]=player fleet, [1]=AI fleet
@@ -237,28 +237,49 @@ static void bsReset(Battleship &b) {
 // draw one board; whichShots: 0 = player's shots on AI fleet, 1 = AI's shots on player fleet
 static void bsDrawBoard(Battleship &b, int whichShots, int ox, bool revealShips) {
   uint8_t fleet = (whichShots == 0) ? 1 : 0;   // the fleet being shot at
+  const uint16_t WATER  = RGB565(0x0a, 0x1e, 0x30);
+  const uint16_t WATER2 = RGB565(0x10, 0x2a, 0x44);
+  const uint16_t HITC   = RGB565(0xc0, 0x30, 0x30);
+  const uint16_t SHIPC   = RGB565(0x70, 0x88, 0x98);
+  // checkerboard water
+  for (int y = 0; y < BS_N; y++)
+    for (int x = 0; x < BS_N; x++) {
+      int px = ox + x * BS_CELL, py = BS_OY + y * BS_CELL;
+      gfx->fillRect(px, py, BS_CELL - 1, BS_CELL - 1, ((x + y) & 1) ? WATER2 : WATER);
+    }
+  // ships / shots overlay
   for (int y = 0; y < BS_N; y++)
     for (int x = 0; x < BS_N; x++) {
       int px = ox + x * BS_CELL, py = BS_OY + y * BS_CELL;
       bool shot = b.shots[whichShots][y][x];
       bool shipHere = b.ships[fleet][y][x];
-      uint16_t bg = RGB565(0x0c, 0x14, 0x0c);
-      if (revealShips && shipHere && !shot) bg = RGB565(0x1c, 0x34, 0x1c);
-      gfx->fillRect(px + 1, py + 1, BS_CELL - 2, BS_CELL - 2, bg);
+      if (revealShips && shipHere && !shot)
+        gfx->fillRect(px + 2, py + 2, BS_CELL - 5, BS_CELL - 5, SHIPC);
       if (shot) {
-        gfx->setTextSize(1);
         if (shipHere) {
-          gfx->setTextColor(TERM_ACCENT, bg);
-          gfx->setCursor(px + 6, py + 6);
+          gfx->fillRect(px + 1, py + 1, BS_CELL - 3, BS_CELL - 3, HITC);
+          gfx->setTextSize(1);
+          gfx->setTextColor(RGB565(255, 255, 255), HITC);
+          gfx->setCursor(px + 5, py + 5);
           gfx->print("X");
         } else {
-          gfx->setTextColor(TERM_DIM, bg);
-          gfx->setCursor(px + 7, py + 6);
-          gfx->print(".");
+          gfx->fillCircle(px + (BS_CELL - 1) / 2, py + (BS_CELL - 1) / 2, 2, RGB565(0x90, 0xb8, 0xd8));
         }
       }
     }
-  gfx->drawRect(ox, BS_OY, BS_N * BS_CELL, BS_N * BS_CELL, TERM_DIM);
+  gfx->drawRect(ox - 1, BS_OY - 1, BS_N * BS_CELL + 1, BS_N * BS_CELL + 1, TERM_DIM);
+  // coordinates: A-H columns, 1-8 rows
+  gfx->setTextSize(1);
+  gfx->setTextColor(TERM_DIM, BLACK);
+  for (int x = 0; x < BS_N; x++) {
+    char cl[2] = {(char)('A' + x), 0};
+    gfx->setCursor(ox + x * BS_CELL + 5, BS_OY - 9);
+    gfx->print(cl);
+  }
+  for (int y = 0; y < BS_N; y++) {
+    gfx->setCursor(ox - 7, BS_OY + y * BS_CELL + 5);
+    gfx->print(y + 1);
+  }
 }
 
 static void bsDraw(Battleship &b, bool full) {
@@ -269,13 +290,21 @@ static void bsDraw(Battleship &b, bool full) {
     gfx->setCursor(4, 7);
     gfx->print("Battleship");
     gfx->drawFastHLine(0, 18, SCREEN_W, TERM_DIM);
-    gfx->setTextColor(TERM_DIM, BLACK);
-    gfx->setCursor(4, 24);
-    gfx->print("Enemy (shoot)      Yours");
+    gfx->setTextColor(TERM_ACCENT, BLACK);
+    gfx->setCursor(BS_OX, 26);
+    gfx->print("ENEMY");
+    gfx->setTextColor(TERM_GREEN, BLACK);
+    gfx->setCursor(BS_OX2, 26);
+    gfx->print("YOURS");
     gfx->setCursor(4, SCREEN_H - 10);
+    gfx->setTextColor(TERM_DIM, BLACK);
     gfx->print("u/d/l/r click=fire Long=back");
     bsDrawBoard(b, 0, BS_OX, false);     // enemy: shots only
     bsDrawBoard(b, 1, BS_OX2, true);     // yours: ships shown
+    // divider between the two boards
+    int dvx = BS_OX + BS_N * BS_CELL + 7;
+    for (int y = 0; y < BS_N * BS_CELL; y += 6)
+      gfx->drawFastVLine(dvx, BS_OY + y, 4, TERM_DIM);
   }
   // cursor on the enemy board
   static int lcx = -1, lcy = -1;
@@ -287,10 +316,10 @@ static void bsDraw(Battleship &b, bool full) {
   lcx = b.cx; lcy = b.cy;
   // fleet counters
   gfx->setTextColor(TERM_BRIGHT, BLACK);
-  gfx->setCursor(140, 26);
-  gfx->printf("E%d ", b.aiFleet);
-  gfx->setCursor(300, 26);
-  gfx->printf("Y%d ", b.playerFleet);
+  gfx->setCursor(BS_OX + 56, 26);
+  gfx->printf("E%d", b.aiFleet);
+  gfx->setCursor(BS_OX2 + 56, 26);
+  gfx->printf("Y%d", b.playerFleet);
   if (b.over) {
     gfx->setTextSize(2);
     bool win = b.playerFleet > 0 && b.aiFleet == 0;
